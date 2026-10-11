@@ -1,7 +1,14 @@
 // Copyright (c) 2025-2026 Digital Asset (Switzerland) GmbH and/or its affiliates. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { create, exercise, init, queryActive, sdk } from './ledger'
+import {
+    create,
+    exercise,
+    init,
+    primaryParty,
+    queryActive,
+    sdk,
+} from './ledger'
 
 const COUNTER = '#chess-poc:Counter:Counter'
 const app = document.getElementById('app')!
@@ -46,8 +53,7 @@ async function main() {
     await init()
     app.innerHTML = '<button id="connect">Connect wallet</button>'
     const start = async () => {
-        const accounts = await sdk.listAccounts()
-        party = (accounts.find((a) => a.primary) ?? accounts[0]).partyId
+        party = await primaryParty()
         await render()
     }
     if (

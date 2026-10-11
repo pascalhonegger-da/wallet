@@ -102,4 +102,12 @@ export const exercise = (
         ExerciseCommand: { templateId, contractId, choice, choiceArgument },
     })
 
+/** Primary account via the CIP-103 provider (the high-level SDK has no wrapper for it in this checkout). */
+export async function primaryParty(): Promise<string> {
+    const provider = sdk.getConnectedProvider()
+    if (!provider) throw new Error('not connected')
+    const account = await provider.request({ method: 'getPrimaryAccount' })
+    return account.partyId
+}
+
 export { sdk }
