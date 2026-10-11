@@ -60,3 +60,21 @@ export function destsOf(fen: string): Map<string, string[]> {
         dests.set(m.from, [...(dests.get(m.from) ?? []), m.to])
     return dests
 }
+
+export type Replay = { fens: string[]; last: ([string, string] | undefined)[] }
+
+/** Replay SAN moves from the start position: the FEN after each ply (index 0 = start) and the squares each ply moved. */
+export function replay(sans: string[]): Replay {
+    const chess = new Chess()
+    const out: Replay = { fens: [chess.fen()], last: [undefined] }
+    for (const san of sans) {
+        try {
+            const m = chess.move(san)
+            out.fens.push(chess.fen())
+            out.last.push([m.from, m.to])
+        } catch {
+            break // cannot happen for moves the ledger accepted
+        }
+    }
+    return out
+}

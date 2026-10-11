@@ -19,6 +19,12 @@ browser ── dApp SDK ──► Wallet Gateway :3030 ──► Canton 3.6 sand
 - **Play**: drag pieces on a [Chessground](https://github.com/lichess-org/chessground) board (the lichess board library, GPL-3.0; it only offers legal moves). `Move` is a
   consuming choice that archives the game and creates the next version. It is turn-based.
 - **Resign**, and **draw offers** (offer / accept / decline / retract). Finished games become a `GameResult`.
+- **Look back**: click any move in the move list (or use the ⏮ ◀ ▶ ⏭ buttons) to see the board as it was then. The shown
+  move is highlighted and the board is view-only until you are back on the latest move. No variants.
+- **Past games**: finished games are listed under Results; **Open** shows a replayable board with the moves.
+- **Raw ledger state**: open the browser console and run `chessDebug.contracts()` (active contracts) or
+  `chessDebug.events()` (every created contract and exercised choice you can see, with arguments and results).
+  `chessDebug.help()` lists the rest. Both print a table and return the full objects.
 - The page polls the ledger every 2 seconds, so both players see updates without reloading.
 
 ## How the rules work
@@ -117,11 +123,12 @@ party on first login, but the app only offers the players listed in `web/public/
 chess-poc/scripts/test-daml.sh          # Daml script tests (separate daml-test package), incl. perft counts
 node chess-poc/scripts/e2e-challenge.mjs# challenges, accept, lobby, polling
 node chess-poc/scripts/e2e-game.mjs     # moves on the board, an illegal move, mate note, castling, draws, resignation
+node chess-poc/scripts/e2e-views.mjs    # looking back at positions, opening past games, the console helpers
 node chess-poc/scripts/e2e-race.mjs     # lost races and double clicks
 node chess-poc/scripts/e2e-ledger.mjs   # cheating client, reject/abandon approvals, en passant, check handling
 ```
 
-The e2e scripts need the stack up. They do not clean up after themselves, and `e2e-game`, `e2e-race` and
+The e2e scripts need the stack up. They do not clean up after themselves, and `e2e-game`, `e2e-race`, `e2e-views` and
 `e2e-ledger` assume an empty ledger (leftover games make their selectors ambiguous), so run each of those straight
 after `reset.sh`. `e2e-challenge` tolerates leftovers. The session-expiry UI (Reconnect banner) is not covered by an e2e test. They drive headless Chromium, so none of this has been seen in a real desktop browser.
 The page has a few test hooks on `window.__chess` (pause polling, shorten the approval timeout, submit a move

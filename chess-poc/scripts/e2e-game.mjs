@@ -136,6 +136,11 @@ await move(alice, 'd8', 'h4')
 // the ledger ends the game by itself: checkmate is a result, no resignation needed
 await waitText(bob.page, 'BlackWins by checkmate')
 await waitText(alice.page, 'BlackWins by checkmate')
+await alice.page
+    .locator('#results li.result')
+    .filter({ hasText: 'BlackWins by checkmate' })
+    .getByText('Open', { exact: true })
+    .click()
 await waitText(alice.page, '1. f3 e5 2. g4 Qh4#')
 ok('move history for a finished game: 1. f3 e5 2. g4 Qh4#', true)
 ok(

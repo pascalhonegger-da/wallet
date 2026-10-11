@@ -123,3 +123,49 @@ li.game .movelist {
     font-family: monospace;
     color: #666;
 }
+.mv {
+    cursor: pointer;
+    padding: 1px 4px;
+    border-radius: 3px;
+}
+.mv:hover {
+    background: #d9e8c4;
+}
+.mv.sel {
+    background: #629924;
+    color: #fff;
+}
+.nav {
+    display: flex;
+    gap: 4px;
+}
+li.result {
+    padding: 8px 0;
+    border-top: 1px solid #e5e3e0;
+}
+li.result:first-child {
+    border-top: 0;
+}
+li.result .replay {
+    display: flex;
+    gap: 24px;
+    margin-top: 8px;
+}
+li.result .replay[hidden] {
+    display: none;
+}
+li.result .board {
+    width: 320px;
+    height: 320px;
+    flex: none;
+}
+footer {
+    margin: 24px;
+    color: #888;
+    font-size: 13px;
+}
+footer code {
+    background: #e5e3e0;
+    padding: 1px 4px;
+    border-radius: 3px;
+}

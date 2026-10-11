@@ -21,7 +21,14 @@ export type BoardOptions = {
     onMove: (from: string, to: string) => Promise<void>
 }
 
-export function mountBoard(el: HTMLElement, o: BoardOptions): Api {
+export type Board = {
+    /** Show an earlier position (view-only, last move highlighted). */
+    show(fen: string, last?: [string, string]): void
+    /** Back to the live position of the ledger, interactive if it is the player's turn. */
+    live(): void
+}
+
+export function mountBoard(el: HTMLElement, o: BoardOptions): Board {
     const position = o.fen.split(' ')[0]
     const cg: Api = Chessground(el, {
         fen: o.fen,
@@ -29,7 +36,7 @@ export function mountBoard(el: HTMLElement, o: BoardOptions): Api {
         coordinates: true,
         viewOnly: !o.dests,
         turnColor: o.color, // chessground does not read the turn from the FEN; without this black moves are premoves
-        highlight: { lastMove: false, check: true },
+        highlight: { lastMove: true, check: true },
         animation: { duration: 150 },
         movable: {
             free: false,
@@ -47,5 +54,28 @@ export function mountBoard(el: HTMLElement, o: BoardOptions): Api {
         premovable: { enabled: false },
         draggable: { showGhost: true },
     })
-    return cg
+    return {
+        show: (fen, last) => {
+            el.classList.add('past')
+            cg.set({
+                fen: fen.split(' ')[0],
+                viewOnly: true,
+                lastMove: last as Key[] | undefined,
+                check: false,
+            })
+        },
+        live: () => {
+            el.classList.remove('past')
+            cg.set({
+                fen: position,
+                viewOnly: !o.dests,
+                lastMove: undefined,
+                check: undefined,
+                movable: {
+                    color: o.dests ? o.color : undefined,
+                    dests: o.dests as Map<Key, Key[]> | undefined,
+                },
+            })
+        },
+    }
 }

@@ -11,9 +11,17 @@ import {
     setApprovalTimeout,
 } from './ledger'
 import './style.css'
-import { mountBoard } from './board'
-import { movesOf, movesText, refreshHistory } from './history'
-import { checkMove, destsOf, fullmoveOf, positionNote, turnOf } from './rules'
+import { installDebug } from './debug'
+import { mountBoard, type Board } from './board'
+import { movesOf, refreshHistory, rootOf } from './history'
+import {
+    checkMove,
+    destsOf,
+    fullmoveOf,
+    positionNote,
+    replay,
+    turnOf,
+} from './rules'
 
 const CHALLENGE = '#chess-poc:Chess:Challenge'
 const GAME = '#chess-poc:Chess:Game'
@@ -73,7 +81,8 @@ function renderShell() {
         </section>
         <section><h4>Challenges</h4><ul id="challenges"></ul></section>
         <section><h4>Games</h4><ul id="games"></ul></section>
-        <section><h4>Results</h4><ul id="results"></ul></section>`
+        <section><h4>Results</h4><ul id="results"></ul></section>
+        <footer>For the ledger state in raw form open the browser console and run <code>chessDebug.contracts()</code> or <code>chessDebug.events()</code> (<code>chessDebug.help()</code> lists more).</footer>`
 
     app.querySelector('#challenge')!.addEventListener('click', () =>
         run(() =>
@@ -90,6 +99,10 @@ function renderShell() {
         )
     )
 }
+
+const navHtml = `<div class="nav">
+    <button data-nav="first" title="start">⏮</button><button data-nav="prev" title="previous move">◀</button>
+    <button data-nav="next" title="next move">▶</button><button data-nav="last" title="latest position">⏭</button></div>`
 
 function gameHtml(cid: string, g: Game) {
     const turn = turnOf(g.fen)
@@ -110,6 +123,7 @@ function gameHtml(cid: string, g: Game) {
             <div class="turn">${turn} to move, move ${fullmoveOf(g.fen)}</div>
             <div class="note">${positionNote(g.fen)}</div>
             <div class="movelist" data-cid="${cid}"></div>
+            ${navHtml}
             <div class="actions"><button data-act="Resign" data-cid="${cid}">Resign</button> ${draw}</div>
         </div>
     </li>`
@@ -137,13 +151,37 @@ function mountBoards(games: { contractId: string; payload: Game }[]) {
         const mine =
             party === g.white ? 'White' : party === g.black ? 'Black' : null
         const myTurn = mine !== null && mine === turnOf(g.fen)
-        mountBoard(li.querySelector<HTMLElement>('.board')!, {
-            fen: g.fen,
-            orientation: party === g.black ? 'black' : 'white',
-            color: mine === 'Black' ? 'black' : 'white',
-            dests: myTurn && !busy ? destsOf(g.fen) : undefined,
-            onMove: (fromSq, toSq) => tryMove(cid, g, fromSq, toSq),
-        })
+        boards.set(
+            cid,
+            mountBoard(li.querySelector<HTMLElement>('.board')!, {
+                fen: g.fen,
+                orientation: party === g.black ? 'black' : 'white',
+                color: mine === 'Black' ? 'black' : 'white',
+                dests: myTurn && !busy ? destsOf(g.fen) : undefined,
+                onMove: (fromSq, toSq) => tryMove(cid, g, fromSq, toSq),
+            })
+        )
+    }
+}
+
+/** Mount a view-only board for every opened past game. */
+function mountResultBoards(
+    results: { contractId: string; payload: GameResult }[]
+) {
+    for (const { contractId: cid, payload: r } of results) {
+        const el = document.querySelector<HTMLElement>(
+            `li.result[data-cid="${cid}"] .board`
+        )
+        if (!el) continue
+        boards.set(
+            cid,
+            mountBoard(el, {
+                fen: r.fen,
+                orientation: party === r.black ? 'black' : 'white',
+                color: 'white',
+                onMove: async () => {},
+            })
+        )
     }
 }
 
@@ -157,9 +195,43 @@ async function showHistory() {
         historyStale = true
         return
     }
-    document.querySelectorAll<HTMLElement>('.movelist').forEach((el) => {
-        el.textContent = movesText(movesOf(el.dataset.cid!))
-    })
+    document
+        .querySelectorAll<HTMLElement>('.movelist')
+        .forEach((el) => renderMoves(el))
+}
+
+const boards = new Map<string, Board>() // contract id -> its board
+const viewPly = new Map<string, number>() // game (id of its first contract) -> the ply being looked at; absent = latest
+const openResults = new Set<string>() // finished games whose board is open
+
+/** Draw one move list (each move is clickable) and show the position it points at on the game's board. */
+function renderMoves(
+    el: HTMLElement,
+    goTo?: 'first' | 'prev' | 'next' | 'last' | number
+) {
+    const cid = el.dataset.cid!
+    const moves = movesOf(cid)
+    const root = rootOf(cid)
+    const latest = moves.length
+    let ply = viewPly.get(root) ?? latest
+    if (goTo === 'first') ply = 0
+    else if (goTo === 'prev') ply = Math.max(0, ply - 1)
+    else if (goTo === 'next') ply = Math.min(latest, ply + 1)
+    else if (goTo === 'last') ply = latest
+    else if (typeof goTo === 'number') ply = goTo
+    if (ply >= latest) viewPly.delete(root)
+    else viewPly.set(root, ply)
+    el.innerHTML = moves
+        .map(
+            (san, i) =>
+                `${i % 2 === 0 ? `${i / 2 + 1}. ` : ''}<span class="mv${i + 1 === ply ? ' sel' : ''}" data-ply="${i + 1}">${san}</span>`
+        )
+        .join(' ')
+    const board = boards.get(cid)
+    if (!board) return
+    if (ply >= latest) return board.live()
+    const r = replay(moves)
+    board.show(r.fens[ply], r.last[ply])
 }
 
 /** Replace a list's contents only if they changed. */
@@ -209,11 +281,17 @@ async function refresh() {
             results
                 .map(
                     ({ contractId, payload: r }) =>
-                        `<li>${nameOf(r.white)} (white) vs ${nameOf(r.black)} (black): ${r.outcome} by ${r.reason} after ${fullmoveOf(r.fen)} moves
-                        <div class="movelist" data-cid="${contractId}"></div></li>`
+                        `<li class="result" data-cid="${contractId}">
+                        <div>${nameOf(r.white)} (white) vs ${nameOf(r.black)} (black): ${r.outcome} by ${r.reason} after ${fullmoveOf(r.fen)} moves
+                        <button data-act="ToggleResult" data-cid="${contractId}">${openResults.has(contractId) ? 'Close' : 'Open'}</button></div>
+                        <div class="replay"${openResults.has(contractId) ? '' : ' hidden'}>
+                            <div class="board"></div>
+                            <div class="side"><div class="movelist" data-cid="${contractId}"></div>${navHtml}</div>
+                        </div></li>`
                 )
                 .join('')
         )
+        if (resultsChanged) mountResultBoards(results)
         if (gamesChanged || resultsChanged || historyStale) void showHistory()
         failures = 0
         document.getElementById('status')!.textContent = ''
@@ -289,12 +367,30 @@ async function run(f: () => Promise<unknown>) {
 // List buttons are re-created on every update, so listen once on the app root.
 app.addEventListener('click', (e) => {
     if ((e.target as HTMLElement).id === 'reconnect') return void reconnect()
-    const b = (e.target as HTMLElement).closest<HTMLButtonElement>(
-        'button[data-act]'
-    )
+    const target = e.target as HTMLElement
+    const mv = target.closest<HTMLElement>('.mv')
+    if (mv)
+        return renderMoves(
+            mv.closest<HTMLElement>('.movelist')!,
+            Number(mv.dataset.ply)
+        )
+    const nav = target.closest<HTMLElement>('button[data-nav]')
+    if (nav) {
+        const list = nav.closest('li')!.querySelector<HTMLElement>('.movelist')!
+        return renderMoves(list, nav.dataset.nav as 'first')
+    }
+    const b = target.closest<HTMLButtonElement>('button[data-act]')
     if (!b) return
     const act = b.dataset.act!
     const cid = b.dataset.cid!
+    if (act === 'ToggleResult') {
+        if (!openResults.delete(cid)) openResults.add(cid)
+        const li = b.closest('li')!
+        li.querySelector<HTMLElement>('.replay')!.hidden = !openResults.has(cid)
+        b.textContent = openResults.has(cid) ? 'Close' : 'Open'
+        delete lastHtml['results'] // re-render (and mount the board) with the next refresh
+        return void refresh()
+    }
     if (['Accept', 'Decline', 'Cancel'].includes(act))
         return void run(() => exercise(party, CHALLENGE, cid, act))
     // Game choices all take `actor`.
@@ -367,4 +463,5 @@ Object.assign(window, {
         },
     },
 })
+installDebug(() => party)
 main()
