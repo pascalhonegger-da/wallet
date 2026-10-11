@@ -15,7 +15,6 @@ import { mountBoard } from './board'
 import { movesOf, movesText, refreshHistory } from './history'
 import { checkMove, destsOf, fullmoveOf, positionNote, turnOf } from './rules'
 
-const COUNTER = '#chess-poc:Counter:Counter'
 const CHALLENGE = '#chess-poc:Chess:Challenge'
 const GAME = '#chess-poc:Chess:Game'
 const RESULT = '#chess-poc:Chess:GameResult'
@@ -74,8 +73,7 @@ function renderShell() {
         </section>
         <section><h4>Challenges</h4><ul id="challenges"></ul></section>
         <section><h4>Games</h4><ul id="games"></ul></section>
-        <section><h4>Results</h4><ul id="results"></ul></section>
-        <section><h4>Counters (milestone 1)</h4><button id="new">New counter</button><ul id="counters"></ul></section>`
+        <section><h4>Results</h4><ul id="results"></ul></section>`
 
     app.querySelector('#challenge')!.addEventListener('click', () =>
         run(() =>
@@ -90,9 +88,6 @@ function renderShell() {
                 ).value,
             })
         )
-    )
-    app.querySelector('#new')!.addEventListener('click', () =>
-        run(() => create(party, COUNTER, { owner: party, value: '0' }))
     )
 }
 
@@ -179,8 +174,7 @@ async function refresh() {
     if (polling || paused) return
     polling = true
     try {
-        const [counters, challenges, games, results] = await Promise.all([
-            queryActive<{ value: string }>(party, COUNTER),
+        const [challenges, games, results] = await Promise.all([
             queryActive<Challenge>(party, CHALLENGE),
             queryActive<Game>(party, GAME),
             queryActive<GameResult>(party, RESULT),
@@ -221,15 +215,6 @@ async function refresh() {
                 .join('')
         )
         if (gamesChanged || resultsChanged || historyStale) void showHistory()
-        setList(
-            'counters',
-            counters
-                .map(
-                    (c) =>
-                        `<li class="counter">${c.payload.value} <button data-cid="${c.contractId}" data-act="Increment">+1</button></li>`
-                )
-                .join('')
-        )
         failures = 0
         document.getElementById('status')!.textContent = ''
     } catch (e) {
@@ -310,8 +295,6 @@ app.addEventListener('click', (e) => {
     if (!b) return
     const act = b.dataset.act!
     const cid = b.dataset.cid!
-    if (act === 'Increment')
-        return void run(() => exercise(party, COUNTER, cid, act))
     if (['Accept', 'Decline', 'Cancel'].includes(act))
         return void run(() => exercise(party, CHALLENGE, cid, act))
     // Game choices all take `actor`.

@@ -115,7 +115,6 @@ party on first login, but the app only offers the players listed in `web/public/
 
 ```bash
 chess-poc/scripts/test-daml.sh          # Daml script tests (separate daml-test package), incl. perft counts
-node chess-poc/scripts/e2e-counter.mjs  # milestone 1: counter signed via the gateway
 node chess-poc/scripts/e2e-challenge.mjs# challenges, accept, lobby, polling
 node chess-poc/scripts/e2e-game.mjs     # moves on the board, an illegal move, mate note, castling, draws, resignation
 node chess-poc/scripts/e2e-race.mjs     # lost races and double clicks
@@ -124,14 +123,14 @@ node chess-poc/scripts/e2e-ledger.mjs   # cheating client, reject/abandon approv
 
 The e2e scripts need the stack up. They do not clean up after themselves, and `e2e-game`, `e2e-race` and
 `e2e-ledger` assume an empty ledger (leftover games make their selectors ambiguous), so run each of those straight
-after `reset.sh`. `e2e-counter` and `e2e-challenge` tolerate leftovers. The session-expiry UI (Reconnect banner) is not covered by an e2e test. They drive headless Chromium, so none of this has been seen in a real desktop browser.
+after `reset.sh`. `e2e-challenge` tolerates leftovers. The session-expiry UI (Reconnect banner) is not covered by an e2e test. They drive headless Chromium, so none of this has been seen in a real desktop browser.
 The page has a few test hooks on `window.__chess` (pause polling, shorten the approval timeout, submit a move
 without the UI's own rule check); they are not used by normal play.
 
 ## Layout
 
 ```
-daml/          Chess.daml (Challenge, Game, GameResult) and Counter.daml (milestone 1); the DAR
+daml/          Chess.daml (Challenge, Game, GameResult); the DAR
 daml-test/     Daml script tests, a separate package that depends on the built DAR
 gateway/       sandbox auth config and the gateway config template (filled in by up.sh)
 web/           the dApp: Vite + TypeScript, dApp SDK, Chessground, chess.js

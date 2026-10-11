@@ -131,6 +131,33 @@ challengeAccept = do
   none <- query @Challenge lobby
   length none === 0
 
+-- | Who has to sign what: a challenge only needs its creator, a game needs both players.
+authorization : Script ()
+authorization = do
+  alice <- allocateParty "alice"
+  bob <- allocateParty "bob"
+  lobby <- allocateParty "lobby"
+  let challenge = Challenge with creator = alice; opponent = bob; lobby; creatorColor = Black
+  -- alice alone can challenge; nobody can challenge in alice's name
+  submitMustFail bob do createCmd challenge
+  c <- submit alice do createCmd challenge
+  -- the opponent alone can accept (the creator's authority comes from the challenge): both end up signatories
+  submitMustFail alice do exerciseCmd c Accept
+  submitMustFail lobby do exerciseCmd c Accept
+  -- a game cannot be created with the signature of one player only
+  let game = Game with white = bob; black = alice; fen = startFen; drawOfferedBy = None; positions = TextMap.empty
+  submitMustFail alice do createCmd game
+  submitMustFail bob do createCmd game
+  g <- submit bob do exerciseCmd c Accept
+  -- both players see it, the lobby does not
+  Some _ <- queryContractId alice g
+  Some _ <- queryContractId bob g
+  None <- queryContractId lobby g
+  -- an outsider can neither move nor resign
+  submitMustFail lobby do exerciseCmd g Resign with actor = lobby
+  submitMustFail alice do exerciseCmd g Resign with actor = bob
+  pure ()
+
 challengeRejected : Script ()
 challengeRejected = do
   alice <- allocateParty "alice"

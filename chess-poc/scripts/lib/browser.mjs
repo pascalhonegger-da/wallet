@@ -34,7 +34,7 @@ export async function login(browser, user) {
     await connectFlow(ctx, page, user, () =>
         page.getByText('Connect wallet').click()
     )
-    await page.getByText('New counter').waitFor()
+    await page.getByText('New challenge').waitFor()
     return {
         user,
         page,
