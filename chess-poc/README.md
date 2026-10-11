@@ -91,7 +91,7 @@ node chess-poc/scripts/e2e-race.mjs     # lost races and double clicks
 
 The e2e scripts need the stack up. They do not clean up after themselves, and `e2e-game` and `e2e-race` assume an
 empty ledger (leftover games make their selectors ambiguous), so run each of those straight after `reset.sh`.
-`e2e-counter` and `e2e-challenge` tolerate leftovers. All five passed on a fresh stack.
+`e2e-counter` and `e2e-challenge` tolerate leftovers. In the final run all four passed (game and race on a freshly reset stack, counter and challenge on a used one).
 
 ## Layout
 
