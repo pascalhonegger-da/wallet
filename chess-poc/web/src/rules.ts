@@ -4,7 +4,6 @@
 import { Chess } from 'chess.js'
 
 export type Turn = 'White' | 'Black'
-type Board = Record<string, string> // square -> piece, e.g. { e2: 'wP' }
 
 function load(fen: string): Chess | null {
     try {
@@ -19,16 +18,8 @@ export const turnOf = (fen: string): Turn =>
 
 export const fullmoveOf = (fen: string): string => fen.split(' ')[5] ?? '1'
 
-/** Piece placement only: what chessboard.js accepts as a position. */
+/** Piece placement only. */
 export const placementOf = (fen: string): string => fen.split(' ')[0]
-
-export function boardOf(fen: string): Board {
-    const board: Board = {}
-    for (const row of load(fen)?.board() ?? [])
-        for (const sq of row)
-            if (sq) board[sq.square] = sq.color + sq.type.toUpperCase()
-    return board
-}
 
 export type MoveCheck =
     { ok: true; san: string } | { ok: false; reason: string }
@@ -60,4 +51,12 @@ export function checkMove(fen: string, from: string, to: string): MoveCheck {
 export function positionNote(fen: string): string {
     const chess = load(fen)
     return chess?.inCheck() ? `${turnOf(fen)} is in check.` : ''
+}
+
+/** Legal destination squares per square for the side to move (chessground's `dests`). */
+export function destsOf(fen: string): Map<string, string[]> {
+    const dests = new Map<string, string[]>()
+    for (const m of load(fen)?.moves({ verbose: true }) ?? [])
+        dests.set(m.from, [...(dests.get(m.from) ?? []), m.to])
+    return dests
 }

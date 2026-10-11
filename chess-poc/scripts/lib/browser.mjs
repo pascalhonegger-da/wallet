@@ -89,8 +89,30 @@ export const waitText = (page, text, opts = {}) =>
         .first()
         .waitFor({ timeout: 20000, ...opts })
 
-/** Drag a piece on the chessboard.js board as `u` (alice is Black, bob is White in the e2e games). Waits until
- * the page shows it is the player's turn: the other side's move arrives by polling. */
+/** Move a piece on the chessground board with the mouse (squares are not elements, so compute coordinates). */
+export async function dragSquares(page, from, to) {
+    const board = page.locator('li.game cg-board').first()
+    await board.locator('piece').first().waitFor({ timeout: 20000 })
+    const box = await board.boundingBox()
+    const black =
+        (await page.locator('li.game .cg-wrap.orientation-black').count()) > 0
+    const at = (sq) => {
+        const f = 'abcdefgh'.indexOf(sq[0])
+        const r = Number(sq[1]) - 1
+        return {
+            x: box.x + ((black ? 7 - f : f) + 0.5) * (box.width / 8),
+            y: box.y + ((black ? r : 7 - r) + 0.5) * (box.height / 8),
+        }
+    }
+    const a = at(from)
+    const b = at(to)
+    // chessground also moves by selecting a piece and then clicking the destination
+    await page.mouse.click(a.x, a.y)
+    await page.mouse.click(b.x, b.y)
+}
+
+/** Drag a piece as `u` (alice is Black, bob is White in the e2e games). Waits until the page shows it is the
+ * player's turn: the other side's move arrives by polling. */
 export async function dragMove(u, from, to) {
     const colour = u.user === 'bob' ? 'White' : 'Black'
     await u.page.waitForFunction(
@@ -98,14 +120,7 @@ export async function dragMove(u, from, to) {
         `${colour} to move`,
         { timeout: 20000 }
     )
-    await u.page
-        .locator(`li.game .square-${from} img`)
-        .waitFor({ timeout: 20000 })
-    await u.approve(() =>
-        u.page
-            .locator(`li.game .square-${from}`)
-            .dragTo(u.page.locator(`li.game .square-${to}`))
-    )
+    await u.approve(() => dragSquares(u.page, from, to))
 }
 
 /** Text of the page's message line, waiting until there is one. */
@@ -132,10 +147,14 @@ export async function startGame(alice, bob) {
     await bob.page.locator('li.game').first().waitFor({ timeout: 20000 })
 }
 
-/** The piece on a square according to the game's text board ('..' if empty). */
+/** The piece on a square according to the game's FEN ('..' if empty), e.g. 'wP'. */
 export async function square(u, sq) {
-    const t = await u.page.locator('li.game pre').first().textContent() // innerText is empty while <details> is closed
-    const row = t.split('\n').find((l) => l.startsWith(sq[1] + ' '))
-    if (!row) throw new Error(`no row for ${sq} in ${JSON.stringify(t)}`)
-    return row.trim().split(/\s+/)[1 + 'abcdefgh'.indexOf(sq[0])]
+    const fen = await u.page.locator('li.game').first().getAttribute('data-fen')
+    const rows = fen.split(' ')[0].split('/')
+    const row = rows[8 - Number(sq[1])].replace(/\d/g, (n) =>
+        '.'.repeat(Number(n))
+    )
+    const c = row['abcdefgh'.indexOf(sq[0])]
+    if (c === '.') return '..'
+    return (c === c.toUpperCase() ? 'w' : 'b') + c.toUpperCase()
 }

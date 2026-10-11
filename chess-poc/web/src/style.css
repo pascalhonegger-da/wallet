@@ -1,0 +1,125 @@
+/* A light take on the lichess look: grey page, white panels, green primary buttons. */
+body {
+    margin: 0;
+    background: #edebe9;
+    color: #4d4d4d;
+    font-family: 'Noto Sans', system-ui, sans-serif;
+    font-size: 15px;
+}
+header {
+    background: #262421;
+    color: #bababa;
+    padding: 10px 24px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+header .logo {
+    color: #fff;
+    font-size: 20px;
+    font-weight: bold;
+}
+header b {
+    color: #fff;
+}
+#app > :not(header) {
+    margin-left: 24px;
+    margin-right: 24px;
+}
+#app > button#connect {
+    margin-top: 24px;
+}
+#message {
+    color: #b00020;
+    min-height: 1.2em;
+    margin-top: 8px;
+}
+section {
+    background: #fff;
+    border-radius: 4px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
+    padding: 8px 16px 12px;
+    margin-top: 16px;
+}
+section h4 {
+    margin: 4px 0 8px;
+    font-weight: 500;
+    color: #4d4d4d;
+}
+ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+li {
+    padding: 4px 0;
+}
+button,
+select {
+    font: inherit;
+    padding: 5px 12px;
+    border-radius: 3px;
+    border: 1px solid #c8c5c0;
+    background: #f6f5f4;
+    color: #4d4d4d;
+    cursor: pointer;
+}
+button:hover {
+    background: #fff;
+}
+button#challenge,
+button#connect,
+button[data-act='Accept'],
+button[data-act='AcceptDraw'] {
+    background: #629924;
+    border-color: #629924;
+    color: #fff;
+}
+button[data-act='Resign'] {
+    color: #b00020;
+}
+body.busy button {
+    opacity: 0.5;
+    pointer-events: none;
+}
+li.game {
+    display: flex;
+    gap: 24px;
+    padding: 12px 0;
+    border-top: 1px solid #e5e3e0;
+}
+li.game:first-child {
+    border-top: 0;
+}
+li.game .board {
+    width: 400px;
+    height: 400px;
+    flex: none;
+}
+li.game .side {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 220px;
+}
+li.game .players {
+    font-weight: 500;
+    font-size: 17px;
+}
+li.game .note {
+    color: #b00020;
+    min-height: 1.2em;
+}
+li.game .movelist {
+    background: #f6f5f4;
+    border-radius: 3px;
+    padding: 8px;
+    flex: 1;
+    min-height: 60px;
+    font-family: monospace;
+    word-break: break-word;
+}
+.movelist {
+    font-family: monospace;
+    color: #666;
+}

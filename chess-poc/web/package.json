@@ -9,9 +9,8 @@
     },
     "dependencies": {
         "@canton-network/dapp-sdk": "catalog:",
-        "@chrisoakman/chessboardjs": "catalog:",
-        "chess.js": "catalog:",
-        "jquery": "catalog:"
+        "chessground": "catalog:",
+        "chess.js": "catalog:"
     },
     "devDependencies": {
         "typescript": "catalog:",

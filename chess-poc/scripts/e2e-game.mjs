@@ -1,7 +1,15 @@
 // Copyright (c) 2025-2026 Digital Asset (Switzerland) GmbH and/or its affiliates. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { launch, login, waitText } from './lib/browser.mjs'
+import {
+    dragMove,
+    dragSquares,
+    launch,
+    login,
+    square,
+    startGame as start,
+    waitText,
+} from './lib/browser.mjs'
 
 const b = await launch()
 const [alice, bob] = await Promise.all(['alice', 'bob'].map((u) => login(b, u)))
@@ -11,76 +19,24 @@ const ok = (label, cond) => {
 }
 const btn = (u, text) =>
     u.page.locator('li.game').getByText(text, { exact: true })
-const square = (u, sq) =>
-    u.page
-        .locator('li.game pre')
-        .first()
-        .textContent() // innerText is empty while the <details> is closed
-        .then((t) => {
-            const row = t.split('\n').find((l) => l.startsWith(sq[1] + ' '))
-            if (!row)
-                throw new Error(
-                    `no row for ${sq} in text board: ${JSON.stringify(t)}`
-                )
-            return row.trim().split(/\s+/)[1 + 'abcdefgh'.indexOf(sq[0])]
-        })
-
-async function startGame() {
-    await alice.page.locator('#opponent').selectOption({ label: 'bob' })
-    await alice.page.locator('#color').selectOption('Black')
-    await alice.approve(() => alice.page.locator('#challenge').click())
-    await bob.page
-        .getByText('Accept', { exact: true })
-        .waitFor({ timeout: 20000 })
-    await bob.approve(() =>
-        bob.page.getByText('Accept', { exact: true }).click()
-    )
-    await alice.page.locator('li.game').first().waitFor({ timeout: 20000 })
-    await bob.page.locator('li.game').first().waitFor({ timeout: 20000 })
-}
-// Every move is a real drag on the chessboard.js board (the typed-move inputs sit in a closed <details>).
-// alice is Black and bob is White in every game here. Wait until this page shows it is the player's turn:
-// the other side's move arrives by polling, and a stale board correctly refuses the drag.
-async function move(u, from, to) {
-    const colour = u.user === 'bob' ? 'White' : 'Black'
-    await u.page.waitForFunction(
-        (t) => document.querySelector('li.game')?.textContent.includes(t),
-        `${colour} to move`,
-        { timeout: 20000 }
-    )
-    await u.page
-        .locator(`li.game .square-${from} img`)
-        .waitFor({ timeout: 20000 })
-    await u.approve(() =>
-        u.page
-            .locator(`li.game .square-${from}`)
-            .dragTo(u.page.locator(`li.game .square-${to}`))
-    )
-}
+const move = dragMove
 const approvalPages = (u) =>
     u.page
         .context()
         .pages()
         .filter((p) => p.url().includes('/approve')).length
 
-await startGame()
+await start(alice, bob)
 ok(
     'only the player to move gets move inputs',
-    (await bob.page.locator('.from').count()) === 1 &&
-        (await alice.page.locator('.from').count()) === 0
+    (await bob.page.locator('.cg-wrap.manipulable').count()) === 1 &&
+        (await alice.page.locator('.cg-wrap.manipulable').count()) === 0
 )
 
-// An illegal drag (pawn three squares) is refused in the UI: message shown, nothing submitted, board unchanged.
-await bob.page.locator('li.game .square-e2 img').waitFor({ timeout: 20000 })
+// An illegal drag (pawn three squares) is not even allowed by the board: nothing submitted, board unchanged.
 const approvalsBefore = approvalPages(bob)
-await bob.page
-    .locator('li.game .square-e2')
-    .dragTo(bob.page.locator('li.game .square-e5'))
-await bob.page
-    .locator('#message')
-    .filter({ hasText: 'Illegal move' })
-    .waitFor({ timeout: 10000 })
-await bob.page.waitForTimeout(1000)
+await dragSquares(bob.page, 'e2', 'e5')
+await bob.page.waitForTimeout(1500)
 ok(
     'illegal move: no new approval page was opened',
     approvalPages(bob) <= approvalsBefore
@@ -101,8 +57,8 @@ await alice.page.waitForFunction(
 ok('alice sees e4 occupied by white pawn', (await square(alice, 'e4')) === 'wP')
 ok(
     'alice (black) can now move, bob cannot',
-    (await alice.page.locator('.from').count()) === 1 &&
-        (await bob.page.locator('.from').count()) === 0
+    (await alice.page.locator('.cg-wrap.manipulable').count()) === 1 &&
+        (await bob.page.locator('.cg-wrap.manipulable').count()) === 0
 )
 await move(alice, 'e7', 'e5')
 await bob.page.waitForFunction(
@@ -168,7 +124,7 @@ ok(
 )
 
 // second game: fool's mate (a capture-free mate in four plies)
-await startGame()
+await start(alice, bob)
 await move(bob, 'f2', 'f3')
 await move(alice, 'e7', 'e5')
 await move(bob, 'g2', 'g4')
@@ -189,7 +145,7 @@ ok(
 )
 
 // third game: castle short by dragging the king two squares (the ledger moves the rook as well)
-await startGame()
+await start(alice, bob)
 for (const [u, from, to] of [
     [bob, 'e2', 'e4'],
     [alice, 'e7', 'e5'],

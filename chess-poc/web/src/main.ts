@@ -10,16 +10,10 @@ import {
     sdk,
     setApprovalTimeout,
 } from './ledger'
+import './style.css'
 import { mountBoard } from './board'
 import { movesOf, movesText, refreshHistory } from './history'
-import {
-    boardOf,
-    checkMove,
-    fullmoveOf,
-    placementOf,
-    positionNote,
-    turnOf,
-} from './rules'
+import { checkMove, destsOf, fullmoveOf, positionNote, turnOf } from './rules'
 
 const COUNTER = '#chess-poc:Counter:Counter'
 const CHALLENGE = '#chess-poc:Chess:Challenge'
@@ -70,8 +64,8 @@ function renderShell() {
         ([n, id]) => id !== party && n !== 'lobby'
     )
     app.innerHTML = `
-        <h3>You are <b>${nameOf(party)}</b> <small id="status"></small> <small id="waiting"></small></h3>
-        <div id="message" role="alert" style="color: #b00020"></div>
+        <header><span class="logo">♞ Canton Chess</span><span>You are <b>${nameOf(party)}</b> <small id="status"></small> <small id="waiting"></small></span></header>
+        <div id="message" role="alert" ></div>
         <section id="new-challenge">
             <h4>New challenge</h4>
             <select id="opponent">${opponents.map(([n, id]) => `<option value="${id}">${n}</option>`).join('')}</select>
@@ -102,23 +96,8 @@ function renderShell() {
     )
 }
 
-const FILES = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']
-
-function asciiBoard(board: Record<string, string>) {
-    return [8, 7, 6, 5, 4, 3, 2, 1]
-        .map(
-            (r) =>
-                `${r} ` +
-                FILES.map((f) => (board[f + r] ?? '..').padEnd(2)).join(' ')
-        )
-        .concat(['  ' + FILES.map((f) => f + ' ').join(' ')])
-        .join('\n')
-}
-
 function gameHtml(cid: string, g: Game) {
-    const me = party === g.white ? 'White' : party === g.black ? 'Black' : null
     const turn = turnOf(g.fen)
-    const myTurn = me === turn
     const opponent = party === g.white ? g.black : g.white
     let draw: string
     if (g.drawOfferedBy == null)
@@ -129,44 +108,45 @@ function gameHtml(cid: string, g: Game) {
         draw = `${nameOf(opponent)} offers a draw
             <button data-act="AcceptDraw" data-cid="${cid}">Accept draw</button>
             <button data-act="DeclineDraw" data-cid="${cid}">Decline draw</button>`
-    return `<li class="game" data-cid="${cid}">
-        ${nameOf(g.white)} (white) vs ${nameOf(g.black)} (black), ${turn} to move, move ${fullmoveOf(g.fen)}
-        <div class="note">${positionNote(g.fen)}</div>
-        <div class="movelist" data-cid="${cid}"></div>
-        <div class="board" style="width: 320px"></div>
-        <details><summary>text board / type a move</summary>
-            <pre>${asciiBoard(boardOf(g.fen))}</pre>
-            ${myTurn ? `<input class="from" size="2" placeholder="e2"> to <input class="to" size="2" placeholder="e4"> <button data-act="Move" data-cid="${cid}">Move</button>` : ''}
-        </details>
-        <button data-act="Resign" data-cid="${cid}">Resign</button> ${draw}
+    return `<li class="game" data-cid="${cid}" data-fen="${g.fen}">
+        <div class="board"></div>
+        <div class="side">
+            <div class="players">${nameOf(g.white)} (white) vs ${nameOf(g.black)} (black)</div>
+            <div class="turn">${turn} to move, move ${fullmoveOf(g.fen)}</div>
+            <div class="note">${positionNote(g.fen)}</div>
+            <div class="movelist" data-cid="${cid}"></div>
+            <div class="actions"><button data-act="Resign" data-cid="${cid}">Resign</button> ${draw}</div>
+        </div>
     </li>`
 }
 
 const currentGames = new Map<string, Game>()
 
 /** Check the move against the chess rules, then submit it. Illegal moves never reach the ledger. */
-function tryMove(cid: string, g: Game, fromSq: string, toSq: string) {
+async function tryMove(cid: string, g: Game, fromSq: string, toSq: string) {
     const check = checkMove(g.fen, fromSq, toSq)
     if (!check.ok) return showMessage(check.reason)
     showMessage('')
-    void run(() =>
+    await run(() =>
         exercise(party, GAME, cid, 'Move', { actor: party, san: check.san })
     )
 }
 
-/** (Re)mount a chessboard.js board in every game item; called whenever the games list HTML was replaced. */
+/** (Re)mount a chessground board in every game item; called whenever the games list HTML was replaced. */
 function mountBoards(games: { contractId: string; payload: Game }[]) {
     for (const { contractId: cid, payload: g } of games) {
         const li = document.querySelector<HTMLElement>(
             `li.game[data-cid="${cid}"]`
         )
         if (!li) continue
-        const mine = party === g.white ? 'w' : party === g.black ? 'b' : ''
-        const myTurn = (turnOf(g.fen) === 'White' ? 'w' : 'b') === mine
-        void mountBoard(li.querySelector<HTMLElement>('.board')!, {
-            position: placementOf(g.fen),
+        const mine =
+            party === g.white ? 'White' : party === g.black ? 'Black' : null
+        const myTurn = mine !== null && mine === turnOf(g.fen)
+        mountBoard(li.querySelector<HTMLElement>('.board')!, {
+            fen: g.fen,
             orientation: party === g.black ? 'black' : 'white',
-            canDrag: (piece) => !busy && myTurn && piece[0] === mine,
+            color: mine === 'Black' ? 'black' : 'white',
+            dests: myTurn && !busy ? destsOf(g.fen) : undefined,
             onMove: (fromSq, toSq) => tryMove(cid, g, fromSq, toSq),
         })
     }
@@ -334,15 +314,7 @@ app.addEventListener('click', (e) => {
         return void run(() => exercise(party, COUNTER, cid, act))
     if (['Accept', 'Decline', 'Cancel'].includes(act))
         return void run(() => exercise(party, CHALLENGE, cid, act))
-    // Game choices all take `actor`; Move reads the squares typed next to the button and is rule-checked.
-    if (act === 'Move') {
-        const li = b.closest('li')!
-        const g = currentGames.get(cid)
-        if (!g) return
-        const sq = (cls: string) =>
-            li.querySelector<HTMLInputElement>(cls)!.value.trim().toLowerCase()
-        return tryMove(cid, g, sq('.from'), sq('.to'))
-    }
+    // Game choices all take `actor`.
     const arg: Record<string, string> = { actor: party }
     run(() => exercise(party, GAME, cid, act, arg))
 })

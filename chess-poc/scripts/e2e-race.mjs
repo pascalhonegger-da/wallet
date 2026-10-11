@@ -1,7 +1,7 @@
 // Copyright (c) 2025-2026 Digital Asset (Switzerland) GmbH and/or its affiliates. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { launch, login } from './lib/browser.mjs'
+import { dragSquares, launch, login } from './lib/browser.mjs'
 
 const b = await launch()
 const [alice, bob] = await Promise.all(['alice', 'bob'].map((u) => login(b, u)))
@@ -65,15 +65,12 @@ ok(
 )
 
 // 3. bob drags a piece in a game alice has just resigned (stale view).
-await bob.page.locator('li.game .square-e2 img').waitFor({ timeout: 20000 })
 await bob.page.evaluate(() => window.__chess.pause())
 await alice.approve(() =>
     alice.page.getByText('Resign', { exact: true }).click()
 )
 await alice.page.locator('#results li').first().waitFor({ timeout: 20000 })
-await bob.page
-    .locator('li.game .square-e2')
-    .dragTo(bob.page.locator('li.game .square-e4'))
+await dragSquares(bob.page, 'e2', 'e4')
 await message(bob).filter({ hasText: /./ }).waitFor({ timeout: 30000 })
 const m2 = await message(bob).innerText()
 console.log('   message:', m2)

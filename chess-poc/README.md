@@ -16,7 +16,7 @@ browser ── dApp SDK ──► Wallet Gateway :3030 ──► Canton 3.6 sand
   so the lobby view shows all open challenges.
 - **Accept** creates a `Game` with both players as signatories and white/black assigned. Decline / cancel are
   also available.
-- **Play**: drag pieces on a chessboard.js board (or type squares under "text board / type a move"). `Move` is a
+- **Play**: drag pieces on a [Chessground](https://github.com/lichess-org/chessground) board (the lichess board library, GPL-3.0; it only offers legal moves). `Move` is a
   consuming choice that archives the game and creates the next version. It is turn-based.
 - **Resign**, and **draw offers** (offer / accept / decline / retract). Finished games become a `GameResult`.
 - The page polls the ledger every 2 seconds, so both players see updates without reloading.
@@ -117,7 +117,7 @@ party on first login, but the app only offers the players listed in `web/public/
 chess-poc/scripts/test-daml.sh          # Daml script tests (separate daml-test package), incl. perft counts
 node chess-poc/scripts/e2e-counter.mjs  # milestone 1: counter signed via the gateway
 node chess-poc/scripts/e2e-challenge.mjs# challenges, accept, lobby, polling
-node chess-poc/scripts/e2e-game.mjs     # dragged moves, an illegal drag, mate note, castling, draws, resignation
+node chess-poc/scripts/e2e-game.mjs     # moves on the board, an illegal move, mate note, castling, draws, resignation
 node chess-poc/scripts/e2e-race.mjs     # lost races and double clicks
 node chess-poc/scripts/e2e-ledger.mjs   # cheating client, reject/abandon approvals, en passant, check handling
 ```
@@ -134,7 +134,7 @@ without the UI's own rule check); they are not used by normal play.
 daml/          Chess.daml (Challenge, Game, GameResult) and Counter.daml (milestone 1); the DAR
 daml-test/     Daml script tests, a separate package that depends on the built DAR
 gateway/       sandbox auth config and the gateway config template (filled in by up.sh)
-web/           the dApp: Vite + TypeScript, dApp SDK, chessboard.js
+web/           the dApp: Vite + TypeScript, dApp SDK, Chessground, chess.js
 scripts/       up/down/reset, deploy-dar, onboard (headless), e2e checks
 ```
 
@@ -150,7 +150,7 @@ scripts/       up/down/reset, deploy-dar, onboard (headless), e2e checks
 - **Mock OAuth.** It is used only for `participant_admin`. It has no login form: the identity is the
   `clientId`, which is why self-issued tokens (a free username) are better for several players.
 - **Workspace dependencies.** The web app depends on the workspace `@canton-network/dapp-sdk` and the gateway runs
-  from `wallet-gateway/remote/dist`, per the "consume, don't fork" constraint. chessboard.js and jQuery were
+  from `wallet-gateway/remote/dist`, per the "consume, don't fork" constraint. Chessground was
   added to the root `pnpm-workspace.yaml` catalog (catalog mode is strict).
 - **Vite dev server breaks the wallet picker.** The SDK serialises a class into a popup and the dev server's
   renamed identifiers (`Vi is not defined`) break it. The app is therefore always built and served with
