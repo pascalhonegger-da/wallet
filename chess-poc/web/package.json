@@ -10,6 +10,7 @@
     "dependencies": {
         "@canton-network/dapp-sdk": "catalog:",
         "@chrisoakman/chessboardjs": "catalog:",
+        "chess.js": "catalog:",
         "jquery": "catalog:"
     },
     "devDependencies": {

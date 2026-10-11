@@ -1,9 +1,10 @@
 module Chess where
 
+import DA.List (findIndex, (!!))
+import DA.Optional (fromSomeNote, isNone, isSome)
+import DA.Text qualified as T
 import DA.TextMap (TextMap)
-import qualified DA.TextMap as TextMap
-import DA.Optional (isNone)
-import DA.Text (isPrefixOf)
+import DA.TextMap qualified as TextMap
 
 data Color = White | Black
   deriving (Eq, Show)
@@ -11,14 +12,364 @@ data Color = White | Black
 type Square = Text  -- "a1" .. "h8"
 type Piece = Text   -- colour + kind, e.g. "wP", "bK"
 
--- | Standard starting position.
-initialBoard : TextMap Piece
-initialBoard = TextMap.fromList (back "1" "w" ++ pawns "2" "w" ++ pawns "7" "b" ++ back "8" "b")
+-- | The standard starting position in FEN.
+startFen : Text
+startFen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+
+-- | A parsed FEN.
+data Position = Position with
+    board : TextMap Piece
+    turn : Color
+    castling : Text       -- subset of "KQkq" in that order, or "-"
+    enPassant : Text      -- the square a pawn can capture onto en passant, or "-"
+    halfmove : Int
+    fullmove : Int
+  deriving (Eq, Show)
+
+-- | A fully resolved, legal move.
+data Mv = Mv with
+    fromSq : Square
+    toSq : Square
+    kind : Text               -- the mover's piece kind: "P", "N", "B", "R", "Q" or "K"
+    promo : Optional Text     -- "Q", "R", "B" or "N"
+    isCapture : Bool
+    castle : Optional Text    -- Some "K" (short) or Some "Q" (long)
+    isEp : Bool
+  deriving (Eq, Show)
+
+-- Small helpers ----------------------------------------------------------------
+
+opposite : Color -> Color
+opposite White = Black
+opposite Black = White
+
+colourText : Color -> Text
+colourText White = "w"
+colourText Black = "b"
+
+-- | DA.Text has no case conversion; these cover the FEN piece letters.
+upperPiece : Text -> Text
+upperPiece c = case c of
+  "p" -> "P"
+  "n" -> "N"
+  "b" -> "B"
+  "r" -> "R"
+  "q" -> "Q"
+  "k" -> "K"
+  _ -> c
+
+lowerPiece : Text -> Text
+lowerPiece c = case c of
+  "P" -> "p"
+  "N" -> "n"
+  "B" -> "b"
+  "R" -> "r"
+  "Q" -> "q"
+  "K" -> "k"
+  _ -> c
+
+fileNames : [Text]
+fileNames = ["a", "b", "c", "d", "e", "f", "g", "h"]
+
+rankNames : [Text]
+rankNames = ["8", "7", "6", "5", "4", "3", "2", "1"]
+
+pieceColour : Piece -> Text
+pieceColour pc = case T.explode pc of
+  [c, _] -> c
+  _ -> error ("invalid piece: " <> pc)
+
+pieceKind : Piece -> Text
+pieceKind pc = case T.explode pc of
+  [_, k] -> k
+  _ -> error ("invalid piece: " <> pc)
+
+-- Coordinates: (file 0..7, rank 1..8) ---------------------------------------------
+
+type Coord = (Int, Int)
+
+sqOf : Coord -> Square
+sqOf (f, r) = fileNames !! f <> show r
+
+coordOf : Square -> Coord
+coordOf sq = case T.explode sq of
+  [f, r] ->
+    ( fromSomeNote ("invalid square: " <> sq) (findIndex (== f) fileNames)
+    , fromSomeNote ("invalid square: " <> sq) (T.parseInt r) )
+  _ -> error ("invalid square: " <> sq)
+
+onBoard : Coord -> Bool
+onBoard (f, r) = f >= 0 && f <= 7 && r >= 1 && r <= 8
+
+add : Coord -> Coord -> Coord
+add (a, b) (c, d) = (a + c, b + d)
+
+-- FEN <-> Position -------------------------------------------------------------
+
+parseFen : Text -> Position
+parseFen fen = case T.splitOn " " fen of
+  [placement, side, castling, enPassant, half, full] ->
+    let rows = T.splitOn "/" placement
+    in if length rows /= 8 then error ("invalid FEN: " <> fen) else Position with
+         board = TextMap.fromList (concat (zipWith parseRank rankNames rows))
+         turn = case side of
+           "w" -> White
+           "b" -> Black
+           _ -> error ("invalid FEN side to move: " <> side)
+         castling
+         enPassant
+         halfmove = fromSomeNote "invalid FEN halfmove clock" (T.parseInt half)
+         fullmove = fromSomeNote "invalid FEN fullmove number" (T.parseInt full)
+  _ -> error ("invalid FEN: " <> fen)
+
+parseRank : Text -> Text -> [(Square, Piece)]
+parseRank rank row = parseRankFrom rank 0 (T.explode row)
+
+-- Daml only allows recursion at the top level.
+parseRankFrom : Text -> Int -> [Text] -> [(Square, Piece)]
+parseRankFrom _ _ [] = []
+parseRankFrom rank i (c :: cs) = case T.parseInt c of
+  Some n -> parseRankFrom rank (i + n) cs
+  None -> (fileNames !! i <> rank, fenPiece c) :: parseRankFrom rank (i + 1) cs
   where
-    files = ["a", "b", "c", "d", "e", "f", "g", "h"]
-    kinds = ["R", "N", "B", "Q", "K", "B", "N", "R"]
-    back rank c = zip (map (<> rank) files) (map (c <>) kinds)
-    pawns rank c = map (\f -> (f <> rank, c <> "P")) files
+    fenPiece x = (if upperPiece x == x then "w" else "b") <> upperPiece x
+
+serializeFen : Position -> Text
+serializeFen p = T.intercalate "/" (map rankText rankNames) <> " " <> side <> " " <> p.castling
+    <> " " <> p.enPassant <> " " <> show p.halfmove <> " " <> show p.fullmove
+  where
+    side = if p.turn == White then "w" else "b"
+    rankText r = finish (foldl (step r) ("", 0) fileNames)
+    step r (acc, n) f = case TextMap.lookup (f <> r) p.board of
+      None -> (acc, n + 1)
+      Some pc -> (acc <> flush n <> fenChar pc, 0)
+    finish (acc, n) = acc <> flush n
+    flush n = if n == 0 then "" else show n
+    fenChar pc = if pieceColour pc == "w" then pieceKind pc else lowerPiece (pieceKind pc)
+
+-- Move generation --------------------------------------------------------------
+
+knightSteps : [Coord]
+knightSteps = [(1, 2), (2, 1), (2, -1), (1, -2), (-1, -2), (-2, -1), (-2, 1), (-1, 2)]
+
+kingSteps : [Coord]
+kingSteps = [(1, 0), (1, 1), (0, 1), (-1, 1), (-1, 0), (-1, -1), (0, -1), (1, -1)]
+
+rookDirs : [Coord]
+rookDirs = [(1, 0), (0, 1), (-1, 0), (0, -1)]
+
+bishopDirs : [Coord]
+bishopDirs = [(1, 1), (-1, 1), (-1, -1), (1, -1)]
+
+occupied : TextMap Piece -> Coord -> Bool
+occupied board c = isSome (TextMap.lookup (sqOf c) board)
+
+-- | Squares reached by stepping in one direction up to and including the first occupied square.
+ray : TextMap Piece -> Coord -> Coord -> [Coord]
+ray board from dir = rayFrom board dir (add from dir)
+
+rayFrom : TextMap Piece -> Coord -> Coord -> [Coord]
+rayFrom board dir c
+  | not (onBoard c) = []
+  | occupied board c = [c]
+  | otherwise = c :: rayFrom board dir (add c dir)
+
+-- | Squares a non-pawn piece attacks (its moves, ignoring whether the target holds a friendly piece).
+reach : TextMap Piece -> Text -> Coord -> [Coord]
+reach board kind from = case kind of
+  "N" -> filter onBoard (map (add from) knightSteps)
+  "K" -> filter onBoard (map (add from) kingSteps)
+  "R" -> concatMap (ray board from) rookDirs
+  "B" -> concatMap (ray board from) bishopDirs
+  "Q" -> concatMap (ray board from) (rookDirs ++ bishopDirs)
+  _ -> []
+
+pawnDir : Color -> Int
+pawnDir White = 1
+pawnDir Black = -1
+
+pawnCaptureSquares : Color -> Coord -> [Coord]
+pawnCaptureSquares c from = filter onBoard [add from (-1, pawnDir c), add from (1, pawnDir c)]
+
+-- | Is `target` attacked by any piece of colour `by`?
+attacked : TextMap Piece -> Color -> Coord -> Bool
+attacked board by target = any hits (TextMap.toList board)
+  where
+    hits (sq, pc)
+      | pieceColour pc /= colourText by = False
+      | pieceKind pc == "P" = target `elem` pawnCaptureSquares by (coordOf sq)
+      | otherwise = target `elem` reach board (pieceKind pc) (coordOf sq)
+
+inCheck : TextMap Piece -> Color -> Bool
+inCheck board c = case filter (\(_, pc) -> pc == colourText c <> "K") (TextMap.toList board) of
+  ((sq, _) :: _) -> attacked board (opposite c) (coordOf sq)
+  [] -> False
+
+-- | Rights lost when a rook leaves, or is captured on, its corner square.
+cornerRight : Square -> [Text]
+cornerRight sq = case sq of
+  "a1" -> ["Q"]
+  "h1" -> ["K"]
+  "a8" -> ["q"]
+  "h8" -> ["k"]
+  _ -> []
+
+-- | Remove castling rights, keeping the "KQkq" order and "-" when none are left.
+dropRights : [Text] -> Text -> Text
+dropRights gone rights =
+  let kept = filter (`notElem` gone) (filter (/= "-") (T.explode rights))
+  in if null kept then "-" else T.implode kept
+
+-- | All pseudo-legal moves (the mover's king may still be left in check).
+pseudoMoves : Position -> [Mv]
+pseudoMoves pos = concatMap fromPiece mine ++ castles
+  where
+    board = pos.board
+    me = pos.turn
+    mc = colourText me
+    foe = opposite me
+    mine = [(coordOf sq, pieceKind pc) | (sq, pc) <- TextMap.toList board, pieceColour pc == mc]
+
+    empty c = not (occupied board c)
+    enemyAt c = case TextMap.lookup (sqOf c) board of
+      Some pc -> pieceColour pc /= mc
+      None -> False
+    friendAt c = case TextMap.lookup (sqOf c) board of
+      Some pc -> pieceColour pc == mc
+      None -> False
+
+    mkMv from kind to promo isCapture castle isEp =
+      Mv with fromSq = sqOf from, toSq = sqOf to, kind, promo, isCapture, castle, isEp
+
+    fromPiece (from, "P") = pawnMoves from
+    fromPiece (from, kind) =
+      [mkMv from kind to None (enemyAt to) None False | to <- reach board kind from, not (friendAt to)]
+
+    pawnMoves from =
+      let d = pawnDir me
+          startRank = if me == White then 2 else 7
+          lastRank = if me == White then 8 else 1
+          one = add from (0, d)
+          two = add from (0, 2 * d)
+          pushes = [(one, False, False) | onBoard one, empty one]
+            ++ [(two, False, False) | snd from == startRank, empty one, empty two]
+          captures = [(c, True, False) | c <- pawnCaptureSquares me from, enemyAt c]
+            ++ [(c, True, True) | c <- pawnCaptureSquares me from, pos.enPassant == sqOf c]
+          withPromotion (to, isCapture, isEp)
+            | snd to == lastRank = [mkMv from "P" to (Some k) isCapture None isEp | k <- ["Q", "R", "B", "N"]]
+            | otherwise = [mkMv from "P" to None isCapture None isEp]
+      in concatMap withPromotion (pushes ++ captures)
+
+    castles =
+      let home = if me == White then 1 else 8
+          rights = T.explode pos.castling
+          hasRight k = (if me == White then k else lowerPiece k) `elem` rights
+          holds f p = TextMap.lookup (sqOf (f, home)) board == Some p
+          clear fs = all (\f -> empty (f, home)) fs
+          safe f = not (attacked board foe (f, home))
+          kingReady = holds 4 (mc <> "K") && not (attacked board foe (4, home))
+          short = [mkMv (4, home) "K" (6, home) None False (Some "K") False
+                  | kingReady, hasRight "K", holds 7 (mc <> "R"), clear [5, 6], safe 5]
+          long = [mkMv (4, home) "K" (2, home) None False (Some "Q") False
+                 | kingReady, hasRight "Q", holds 0 (mc <> "R"), clear [1, 2, 3], safe 3]
+      in short ++ long
+
+-- | Play a move: the new position (no legality checks).
+applyMv : Position -> Mv -> Position
+applyMv pos mv =
+  let mc = colourText pos.turn
+      (fFrom, rFrom) = coordOf mv.fromSq
+      (fTo, rTo) = coordOf mv.toSq
+      landed = case mv.promo of
+        Some k -> mc <> k
+        None -> mc <> mv.kind
+      moved = TextMap.insert mv.toSq landed (TextMap.delete mv.fromSq pos.board)
+      afterEp = if mv.isEp then TextMap.delete (sqOf (fTo, rFrom)) moved else moved
+      afterCastle = case mv.castle of
+        None -> afterEp
+        Some "K" -> TextMap.insert (sqOf (5, rFrom)) (mc <> "R") (TextMap.delete (sqOf (7, rFrom)) afterEp)
+        Some _ -> TextMap.insert (sqOf (3, rFrom)) (mc <> "R") (TextMap.delete (sqOf (0, rFrom)) afterEp)
+      kingRights
+        | mv.kind /= "K" = []
+        | pos.turn == White = ["K", "Q"]
+        | otherwise = ["k", "q"]
+      gone = kingRights ++ cornerRight mv.fromSq ++ cornerRight mv.toSq
+      doublePush = mv.kind == "P" && abs (rTo - rFrom) == 2
+  in pos with
+       board = afterCastle
+       turn = opposite pos.turn
+       castling = dropRights gone pos.castling
+       enPassant = if doublePush then sqOf (fFrom, (rFrom + rTo) / 2) else "-"
+       halfmove = if mv.kind == "P" || mv.isCapture then 0 else pos.halfmove + 1
+       fullmove = if pos.turn == Black then pos.fullmove + 1 else pos.fullmove
+
+-- | Every legal move: pseudo-legal moves that do not leave the mover's own king in check.
+legalMoves : Position -> [Mv]
+legalMoves pos = filter (\mv -> not (inCheck (applyMv pos mv).board pos.turn)) (pseudoMoves pos)
+
+-- Standard algebraic notation --------------------------------------------------
+
+data San = San with
+    kind : Text
+    fromFile : Optional Text
+    fromRank : Optional Text
+    capture : Bool
+    toSq : Square
+    promo : Optional Text
+  deriving (Eq, Show)
+
+-- | Drop the check/mate/annotation suffix chess.js appends ("+", "#", "!", "?").
+stripSuffix : Text -> Text
+stripSuffix s = T.implode (reverse (dropWhile (`elem` ["+", "#", "!", "?"]) (reverse (T.explode s))))
+
+parseSan : Text -> Either Text San
+parseSan s =
+  let cs0 = T.explode (stripSuffix s)
+      (kind, cs1) = case cs0 of
+        (c :: rest) | c `elem` ["N", "B", "R", "Q", "K"] -> (c, rest)
+        _ -> ("P", cs0)
+      (body, promoPart) = break (== "=") cs1
+      promo = case promoPart of
+        ["=", k] -> Some k
+        _ -> None
+      capture = "x" `elem` body
+      cs3 = filter (/= "x") body
+  in if not (null promoPart) && isNone promo then Left ("invalid move: " <> s) else
+     case reverse cs3 of
+       (r :: f :: dis) | f `elem` fileNames && r `elem` rankNames ->
+         let disambiguator = reverse dis
+             fromFile = case filter (`elem` fileNames) disambiguator of
+               (x :: _) -> Some x
+               [] -> None
+             fromRank = case filter (`elem` rankNames) disambiguator of
+               (x :: _) -> Some x
+               [] -> None
+         in if length disambiguator /= length (filter (`elem` (fileNames ++ rankNames)) disambiguator)
+              then Left ("invalid move: " <> s)
+              else Right (San with kind, fromFile, fromRank, capture, toSq = f <> r, promo)
+       _ -> Left ("invalid move: " <> s)
+
+-- | Resolve a SAN string to the single legal move it denotes in this position.
+moveFromSan : Position -> Text -> Either Text Mv
+moveFromSan pos s
+  | stripped `elem` ["O-O", "0-0"] = pick (filter (\m -> m.castle == Some "K") legal)
+  | stripped `elem` ["O-O-O", "0-0-0"] = pick (filter (\m -> m.castle == Some "Q") legal)
+  | otherwise = do
+      san <- parseSan s
+      pick (filter (matches san) legal)
+  where
+    stripped = stripSuffix s
+    legal = legalMoves pos
+    pick [m] = Right m
+    pick [] = Left ("illegal move: " <> s)
+    pick _ = Left ("ambiguous move: " <> s)
+    matches san m =
+      let (fromF, fromR) = (T.explode m.fromSq !! 0, T.explode m.fromSq !! 1)
+      in isNone m.castle && m.kind == san.kind && m.toSq == san.toSq && m.promo == san.promo
+           && m.isCapture == san.capture
+           && optional True (== fromF) san.fromFile && optional True (== fromR) san.fromRank
+
+-- Contracts --------------------------------------------------------------------
 
 -- | An invitation to play. The lobby party observes it so open challenges are discoverable.
 template Challenge with
@@ -40,9 +391,7 @@ template Challenge with
         create Game with
           white
           black
-          board = initialBoard
-          turn = White
-          moveCount = 0
+          fen = startFen
           drawOfferedBy = None
 
     choice Decline : ()
@@ -56,36 +405,32 @@ template Challenge with
 data Outcome = WhiteWins | BlackWins | Drawn
   deriving (Eq, Show)
 
--- | A running game. Every state change archives it and creates the next version.
+-- | A running game. The position is a single FEN string; every state change archives the game and
+-- creates the next version.
 template Game with
     white : Party
     black : Party
-    board : TextMap Piece
-    turn : Color
-    moveCount : Int
+    fen : Text
     drawOfferedBy : Optional Party
   where
     signatory white, black
     ensure white /= black
 
-    -- | Move a piece. No rules validation yet: the origin square must hold one of the mover's pieces.
+    -- | Play a move given in standard algebraic notation (e.g. "e4", "Nbd7", "exd5", "e8=Q", "O-O").
+    -- The ledger resolves it against the position and rejects anything illegal or ambiguous.
     -- A move implicitly declines any pending draw offer.
     choice Move : ContractId Game with
         actor : Party
-        fromSq : Square
-        toSq : Square
+        san : Text
       controller actor
       do
-        assertMsg "not your turn" (actor == (if turn == White then white else black))
-        piece <- case TextMap.lookup fromSq board of
-          None -> abort ("no piece on " <> fromSq)
-          Some pc -> pure pc
-        assertMsg "not your piece" (isPrefixOf (if turn == White then "w" else "b") piece)
-        assertMsg "from and to are the same square" (fromSq /= toSq)
+        let pos = parseFen fen
+        assertMsg "not your turn" (actor == (if pos.turn == White then white else black))
+        mv <- case moveFromSan pos san of
+          Left err -> abort err
+          Right m -> pure m
         create this with
-          board = TextMap.insert toSq piece (TextMap.delete fromSq board)
-          turn = if turn == White then Black else White
-          moveCount = moveCount + 1
+          fen = serializeFen (applyMv pos mv)
           drawOfferedBy = None
 
     choice Resign : ContractId GameResult with
@@ -96,8 +441,7 @@ template Game with
         create GameResult with
           white
           black
-          board
-          moveCount
+          fen
           outcome = if actor == white then BlackWins else WhiteWins
           reason = "resignation"
 
@@ -133,8 +477,7 @@ template Game with
         create GameResult with
           white
           black
-          board
-          moveCount
+          fen
           outcome = Drawn
           reason = "draw by agreement"
 
@@ -142,8 +485,7 @@ template Game with
 template GameResult with
     white : Party
     black : Party
-    board : TextMap Piece
-    moveCount : Int
+    fen : Text
     outcome : Outcome
     reason : Text
   where

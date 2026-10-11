@@ -40,7 +40,7 @@ function pieceTheme(piece: string) {
 }
 
 export type BoardOptions = {
-    position: Position
+    position: string | Position
     orientation: 'white' | 'black'
     /** May the user pick up this piece (e.g. 'wP') right now? */
     canDrag: (piece: string) => boolean

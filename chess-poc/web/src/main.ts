@@ -10,6 +10,14 @@ import {
     sdk,
 } from './ledger'
 import { mountBoard } from './board'
+import {
+    boardOf,
+    checkMove,
+    fullmoveOf,
+    placementOf,
+    positionNote,
+    turnOf,
+} from './rules'
 
 const COUNTER = '#chess-poc:Counter:Counter'
 const CHALLENGE = '#chess-poc:Chess:Challenge'
@@ -26,9 +34,7 @@ type Challenge = {
 type Game = {
     white: string
     black: string
-    board: Record<string, string>
-    turn: 'White' | 'Black'
-    moveCount: string
+    fen: string
     drawOfferedBy?: string | null
 }
 type GameResult = {
@@ -36,7 +42,7 @@ type GameResult = {
     black: string
     outcome: string
     reason: string
-    moveCount: string
+    fen: string
 }
 
 const app = document.getElementById('app')!
@@ -107,7 +113,8 @@ function asciiBoard(board: Record<string, string>) {
 
 function gameHtml(cid: string, g: Game) {
     const me = party === g.white ? 'White' : party === g.black ? 'Black' : null
-    const myTurn = me === g.turn
+    const turn = turnOf(g.fen)
+    const myTurn = me === turn
     const opponent = party === g.white ? g.black : g.white
     let draw: string
     if (g.drawOfferedBy == null)
@@ -119,14 +126,27 @@ function gameHtml(cid: string, g: Game) {
             <button data-act="AcceptDraw" data-cid="${cid}">Accept draw</button>
             <button data-act="DeclineDraw" data-cid="${cid}">Decline draw</button>`
     return `<li class="game" data-cid="${cid}">
-        ${nameOf(g.white)} (white) vs ${nameOf(g.black)} (black), ${g.turn} to move, move ${g.moveCount}
+        ${nameOf(g.white)} (white) vs ${nameOf(g.black)} (black), ${turn} to move, move ${fullmoveOf(g.fen)}
+        <div class="note">${positionNote(g.fen)}</div>
         <div class="board" style="width: 320px"></div>
         <details><summary>text board / type a move</summary>
-            <pre>${asciiBoard(g.board)}</pre>
+            <pre>${asciiBoard(boardOf(g.fen))}</pre>
             ${myTurn ? `<input class="from" size="2" placeholder="e2"> to <input class="to" size="2" placeholder="e4"> <button data-act="Move" data-cid="${cid}">Move</button>` : ''}
         </details>
         <button data-act="Resign" data-cid="${cid}">Resign</button> ${draw}
     </li>`
+}
+
+const currentGames = new Map<string, Game>()
+
+/** Check the move against the chess rules, then submit it. Illegal moves never reach the ledger. */
+function tryMove(cid: string, g: Game, fromSq: string, toSq: string) {
+    const check = checkMove(g.fen, fromSq, toSq)
+    if (!check.ok) return showMessage(check.reason)
+    showMessage('')
+    void run(() =>
+        exercise(party, GAME, cid, 'Move', { actor: party, san: check.san })
+    )
 }
 
 /** (Re)mount a chessboard.js board in every game item; called whenever the games list HTML was replaced. */
@@ -137,19 +157,12 @@ function mountBoards(games: { contractId: string; payload: Game }[]) {
         )
         if (!li) continue
         const mine = party === g.white ? 'w' : party === g.black ? 'b' : ''
-        const myTurn = (g.turn === 'White' ? 'w' : 'b') === mine
+        const myTurn = (turnOf(g.fen) === 'White' ? 'w' : 'b') === mine
         void mountBoard(li.querySelector<HTMLElement>('.board')!, {
-            position: g.board,
+            position: placementOf(g.fen),
             orientation: party === g.black ? 'black' : 'white',
             canDrag: (piece) => !busy && myTurn && piece[0] === mine,
-            onMove: (fromSq, toSq) =>
-                void run(() =>
-                    exercise(party, GAME, cid, 'Move', {
-                        actor: party,
-                        fromSq,
-                        toSq,
-                    })
-                ),
+            onMove: (fromSq, toSq) => tryMove(cid, g, fromSq, toSq),
         })
     }
 }
@@ -187,6 +200,9 @@ async function refresh() {
                 })
                 .join('')
         )
+        currentGames.clear()
+        for (const { contractId, payload } of games)
+            currentGames.set(contractId, payload)
         if (
             setList(
                 'games',
@@ -203,7 +219,7 @@ async function refresh() {
             results
                 .map(
                     ({ payload: r }) =>
-                        `<li>${nameOf(r.white)} (white) vs ${nameOf(r.black)} (black): ${r.outcome} by ${r.reason} after ${r.moveCount} moves</li>`
+                        `<li>${nameOf(r.white)} (white) vs ${nameOf(r.black)} (black): ${r.outcome} by ${r.reason} after ${fullmoveOf(r.fen)} moves</li>`
                 )
                 .join('')
         )
@@ -278,19 +294,16 @@ app.addEventListener('click', (e) => {
         return void run(() => exercise(party, COUNTER, cid, act))
     if (['Accept', 'Decline', 'Cancel'].includes(act))
         return void run(() => exercise(party, CHALLENGE, cid, act))
-    // Game choices all take `actor`; Move also reads the squares typed next to the button.
-    const arg: Record<string, string> = { actor: party }
+    // Game choices all take `actor`; Move reads the squares typed next to the button and is rule-checked.
     if (act === 'Move') {
         const li = b.closest('li')!
-        arg.fromSq = li
-            .querySelector<HTMLInputElement>('.from')!
-            .value.trim()
-            .toLowerCase()
-        arg.toSq = li
-            .querySelector<HTMLInputElement>('.to')!
-            .value.trim()
-            .toLowerCase()
+        const g = currentGames.get(cid)
+        if (!g) return
+        const sq = (cls: string) =>
+            li.querySelector<HTMLInputElement>(cls)!.value.trim().toLowerCase()
+        return tryMove(cid, g, sq('.from'), sq('.to'))
     }
+    const arg: Record<string, string> = { actor: party }
     run(() => exercise(party, GAME, cid, act, arg))
 })
 

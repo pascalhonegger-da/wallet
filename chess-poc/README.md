@@ -21,9 +21,20 @@ browser ── dApp SDK ──► Wallet Gateway :3030 ──► Canton 3.6 sand
 - **Resign**, and **draw offers** (offer / accept / decline / retract). Finished games become a `GameResult`.
 - The page polls the ledger every 2 seconds, so both players see updates without reloading.
 
-**No chess rules are enforced.** `Move` only checks that it is your turn, that the origin square holds one of
-your pieces, and that origin and target differ. Anything else (illegal moves, captures of your own pieces,
-check, castling, ...) is allowed. Milestone 5 (validation, clock) was not built.
+## How the rules work
+
+The game state is one **FEN** string (`Game.fen`). `Move` takes the move in **standard algebraic notation**
+(`e4`, `Nbd7`, `exd5`, `e8=Q`, `O-O`; check/mate suffixes and long forms like `e2e4` are accepted) and Daml computes
+the next FEN. So the ledger enforces the rules, not just the UI: it generates all legal moves (including pins,
+castling rights and not castling through check, en passant, promotion) and resolves the SAN to exactly one of
+them, rejecting illegal or ambiguous moves. The web app also uses chess.js on the same FEN, but only for
+immediate feedback and to produce the SAN it submits; another client could not cheat.
+
+The move generator is checked against the published perft node counts for six standard positions
+(`daml-test`), which exercise castling, en passant, promotion and pins.
+
+Not enforced yet: nothing ends a game automatically on checkmate, stalemate, repetition or insufficient material
+(the UI only shows a note on checkmate/stalemate). Players end games with resign or an agreed draw.
 
 ## Prerequisites
 
@@ -85,7 +96,7 @@ party on first login, but the app only offers the players listed in `web/public/
 chess-poc/scripts/test-daml.sh          # Daml script tests (separate daml-test package)
 node chess-poc/scripts/e2e-counter.mjs  # milestone 1: counter signed via the gateway
 node chess-poc/scripts/e2e-challenge.mjs# challenges, accept, lobby, polling
-node chess-poc/scripts/e2e-game.mjs     # moves (all by dragging on the board), draw offers, resignation
+node chess-poc/scripts/e2e-game.mjs     # dragged moves, an illegal drag, mate note, castling, draws, resignation
 node chess-poc/scripts/e2e-race.mjs     # lost races and double clicks
 ```
 
@@ -133,6 +144,7 @@ scripts/       up/down/reset, deploy-dar, onboard (headless), e2e checks
 - **Process hygiene.** `pkill -f` patterns can match the shell that runs them; `down.sh` uses `[x]` patterns for
   that reason. Run `reset.sh` as a single command: interleaved runs leave a ledger user without a gateway wallet
   (`Self-issued login is not available for this user.`).
+- **Daml has no local recursion**: recursive helpers must be top level. Also `DA.Text` has no case conversion.
 - **Draw offers live on the Game**, not as a separate contract, so archiving the game on every move can never
   leave a stale offer behind.
 - **Unexplained once:** during one aborted e2e run the gateway's Approve button stayed disabled. It did not
@@ -142,6 +154,7 @@ scripts/       up/down/reset, deploy-dar, onboard (headless), e2e checks
 
 ## Not done
 
-- Move validation and the chess clock (milestone 5).
+- The chess clock (the move validation half of milestone 5 is done, on the ledger).
+- Automatic game endings (checkmate, stalemate, repetition) and a move history.
 - Streaming instead of polling.
 - Any cleanup of finished games / results, or a way to find other players than the configured ones.
