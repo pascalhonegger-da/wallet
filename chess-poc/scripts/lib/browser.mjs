@@ -3,6 +3,9 @@
 
 import { chromium } from '../../../node_modules/playwright/index.mjs'
 
+/** The chess app: the local stack by default, or e.g. CHESS_URL=http://localhost:8080 for the Docker image. */
+export const APP_URL = process.env.CHESS_URL ?? 'http://localhost:5173/'
+
 export const launch = () => chromium.launch()
 
 /** Run the wallet connect flow: `trigger` starts it (Connect wallet / Reconnect), then pick the local gateway,
@@ -11,10 +14,10 @@ export async function connectFlow(ctx, page, user, trigger) {
     const popup = ctx.waitForEvent('page', { timeout: 20000 })
     await trigger()
     const picker = await popup
-    await picker.getByText('Local Gateway').click()
+    await picker.getByText('Chess Wallet Gateway').click()
     const gw = await until(
         page,
-        () => ctx.pages().find((x) => x.url().includes(':3030/login')),
+        () => ctx.pages().find((x) => /\/login\/?(\?|$)/.test(x.url())),
         'the gateway login popup'
     )
     await gw.locator('input').first().fill(user)
@@ -45,7 +48,7 @@ export async function login(browser, user, { register = true } = {}) {
         console.log(`[${user}] DIALOG:`, d.message())
         d.dismiss()
     })
-    await page.goto('http://localhost:5173/')
+    await page.goto(APP_URL)
     await connectFlow(ctx, page, user, () =>
         page.getByText('Connect wallet').click()
     )

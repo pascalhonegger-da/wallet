@@ -45,7 +45,7 @@ WORKDIR="$ROOT" start grantread node "$ROOT/scripts/grant-lobby-read.mjs" "$LOBB
 # Web app: production build + preview (the Vite dev server breaks the SDK's wallet-picker popup).
 # The lobby party id changes on every reset, so the app reads it from web/public/config.json (copied into every build).
 mkdir -p "$ROOT/web/public"
-echo "{\"lobby\": \"$LOBBY\"}" > "$ROOT/web/public/config.json"
+echo "{\"lobby\": \"$LOBBY\", \"gatewayUrl\": \"http://localhost:3030/api/v0/dapp\"}" > "$ROOT/web/public/config.json"
 (cd "$ROOT/web" && ./node_modules/.bin/vite build > "$RUN/web-build.log" 2>&1) || { tail -30 "$RUN/web-build.log"; echo "web build failed"; exit 1; }
 WORKDIR="$ROOT/web" start web ./node_modules/.bin/vite preview --port 5173 --host 0.0.0.0 --strictPort
 waitfor web http://localhost:5173/

@@ -107,6 +107,40 @@ Logs are in `chess-poc/.run/`.
 Resources, measured for the Canton sandbox alone: about 1.3 GB RAM, near-zero CPU when idle (a few hundred percent
 for ~30 s at startup). Total for the stack was not separately measured.
 
+## Hosting it in Docker
+
+One container runs everything (Canton sandbox, Wallet Gateway, mock OAuth, the lobby grant script, the chess UI and
+nginx). All state is in memory or inside the container, so removing the container removes all data, and a restart
+starts from scratch. Only port 8080 is exposed: put TLS in front of it.
+
+```bash
+# from the repository root (the build needs the workspace packages)
+docker build -f chess-poc/Dockerfile -t canton-chess .
+docker run -d --name canton-chess -p 8080:8080 -e PUBLIC_URL=https://canton-chess.honegger.dev canton-chess
+```
+
+- `/` is the chess UI, `/wallet-gateway/` the Wallet Gateway. The dApp API (what the SDK connects to) is
+  `https://canton-chess.honegger.dev/wallet-gateway/api/v0/dapp`; the gateway's login and approval pages open from the
+  same prefix. The app finds the gateway at `/wallet-gateway` on its own origin (override with `gatewayUrl` in
+  `config.json`).
+- `PUBLIC_URL` must be the exact public origin (scheme and host, no path): the gateway uses it for its links and for
+  its allowed origin. Your TLS proxy should pass the `Host` header through; nginx in the container pins the gateway's
+  `Host` and `X-Forwarded-Proto` from `PUBLIC_URL` anyway. Allow long-lived connections (the dApp API streams events).
+- Starting takes a minute or two (the sandbox boots and the DAR is deployed); `docker logs` shows progress and
+  `/wallet-gateway/healthz` answers once the gateway is up. If any process in the container dies, the container
+  exits (use `--restart unless-stopped` if you want it to come back, with an empty ledger).
+- The image is several GB (the Daml SDK). Memory: Canton needs about 1.5 GB, so give the container 2 GB or more. Java and Node come from their official
+  images; the Daml SDK 3.6.0 (with the sandbox) is installed with `dpm` during the image build (`--build-arg
+SDK_VERSION=...`, but self-issued tokens need Canton 3.6+).
+- This is the same joke PoC: the mock OAuth admin secret is the one in `gateway/config.template.json` (only reachable
+  inside the container), and anybody who reaches the site can create a party and play.
+- **Not verified here:** the `docker build` itself. The Docker daemon in my sandbox ran out of disk, so I could only
+  check the Dockerfile with `docker buildx build --check`. What I did run: the same `docker/start.sh`, nginx config
+  (real nginx, from its image) and built artifacts outside the image, with the e2e sign-up and game tests passing
+  through `/wallet-gateway/`.
+- Test a built image locally with `docker run -p 8080:8080 -e PUBLIC_URL=http://localhost:8080 canton-chess` and
+  `CHESS_URL=http://localhost:8080 node chess-poc/scripts/e2e-signup.mjs`.
+
 ## Playing a game in two browsers
 
 The services listen on all interfaces. From the sandbox host publish the two ports a browser needs (the ledger
@@ -121,7 +155,7 @@ sbx ports <sandbox-name> --publish 3030:3030/tcp
 window, both on **http://localhost:5173**. The app and the gateway must be reached as `localhost` (the gateway URL
 and allowed origin are `localhost`).
 
-1. Click **Connect wallet**, pick **Local Gateway**. In the gateway popup enter a username (`alice` in one
+1. Click **Connect wallet**, pick **Chess Wallet Gateway**. In the gateway popup enter a username (`alice` in one
    browser, `bob` in the other) and click Connect. A first-time user is taken through the gateway's onboarding page:
    enter any wallet name, keep the signing provider selection (`wallet-kernel`), click **Create party**. A returning
    user clicks **Select** on their party instead.

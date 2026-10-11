@@ -4,14 +4,13 @@
 import * as sdk from '@canton-network/dapp-sdk'
 import { RemoteAdapter } from '@canton-network/dapp-sdk'
 
-export const GATEWAY_DAPP_URL = 'http://localhost:3030/api/v0/dapp'
-
-export async function init() {
+/** `dappUrl` is the gateway's dApp API (see config.json: `gatewayUrl`). */
+export async function init(dappUrl: string) {
     await sdk.init({
         defaultAdapters: [
             new RemoteAdapter({
-                name: 'Local Gateway',
-                rpcUrl: GATEWAY_DAPP_URL,
+                name: 'Chess Wallet Gateway',
+                rpcUrl: dappUrl,
             }),
         ],
         enableSuggestedWallets: false,

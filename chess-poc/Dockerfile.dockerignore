@@ -1,0 +1,17 @@
+**/node_modules
+**/dist
+**/.git
+**/.nx
+**/.run
+**/.daml
+**/*.sqlite
+**/*.log
+**/coverage
+chess-poc/web/public/config.json
+canton
+docs
+examples
+.localnet
+.pnpm-store
+.nx
+.git

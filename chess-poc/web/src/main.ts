@@ -28,7 +28,8 @@ const GAME = '#chess-poc:Chess:Game'
 const RESULT = '#chess-poc:Chess:GameResult'
 const PLAYER = '#chess-poc:Chess:Player'
 
-type Config = { lobby: string }
+// gatewayUrl: the gateway's dApp API; by default the gateway is served under /wallet-gateway on the same origin
+type Config = { lobby: string; gatewayUrl?: string }
 type Player = { player: string; lobby: string }
 type Challenge = {
     creator: string
@@ -482,7 +483,10 @@ async function reconnect() {
 
 async function main() {
     config = await (await fetch('/config.json')).json()
-    await init()
+    await init(
+        config.gatewayUrl ??
+            new URL('/wallet-gateway/api/v0/dapp', location.origin).href
+    )
     app.innerHTML = '<button id="connect">Connect wallet</button>'
     if (
         await sdk

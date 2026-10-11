@@ -1,0 +1,37 @@
+# Rendered by start.sh (@HOST@, @SCHEME@). nginx runs in the foreground as the container's last process.
+worker_processes 1;
+daemon off;
+pid /tmp/nginx.pid;
+error_log /dev/stderr warn;
+events { worker_connections 512; }
+http {
+  include /etc/nginx/mime.types;
+  access_log off;
+  client_body_temp_path /tmp/nginx-body;
+  proxy_temp_path /tmp/nginx-proxy;
+  fastcgi_temp_path /tmp/nginx-fastcgi;
+  uwsgi_temp_path /tmp/nginx-uwsgi;
+  scgi_temp_path /tmp/nginx-scgi;
+  server {
+    listen 8080;
+    root /opt/chess/web;
+
+    # the chess UI
+    location / { try_files $uri /index.html; }
+    location = /config.json { add_header Cache-Control no-store; }
+
+    # the Wallet Gateway: the dApp API is /wallet-gateway/api/v0/dapp, its login and approval pages live below it too
+    location /wallet-gateway/ {
+      proxy_pass http://127.0.0.1:3030/;
+      proxy_http_version 1.1;
+      proxy_set_header Host @HOST@;
+      proxy_set_header X-Forwarded-Proto @SCHEME@;
+      proxy_set_header X-Forwarded-For $remote_addr;
+      proxy_set_header Connection "";
+      proxy_buffering off;          # the dApp API streams events (SSE)
+      proxy_read_timeout 1h;
+      # the gateway redirects to absolute paths of its own root (/login/): keep them under the prefix
+      proxy_redirect ~^/(.*)$ /wallet-gateway/$1;
+    }
+  }
+}
