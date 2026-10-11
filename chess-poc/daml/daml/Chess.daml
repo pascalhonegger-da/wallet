@@ -2,6 +2,8 @@ module Chess where
 
 import DA.TextMap (TextMap)
 import qualified DA.TextMap as TextMap
+import DA.Optional (isNone)
+import DA.Text (isPrefixOf)
 
 data Color = White | Black
   deriving (Eq, Show)
@@ -41,6 +43,7 @@ template Challenge with
           board = initialBoard
           turn = White
           moveCount = 0
+          drawOfferedBy = None
 
     choice Decline : ()
       controller opponent
@@ -50,12 +53,98 @@ template Challenge with
       controller creator
       do pure ()
 
+data Outcome = WhiteWins | BlackWins | Drawn
+  deriving (Eq, Show)
+
+-- | A running game. Every state change archives it and creates the next version.
 template Game with
     white : Party
     black : Party
     board : TextMap Piece
     turn : Color
     moveCount : Int
+    drawOfferedBy : Optional Party
   where
     signatory white, black
     ensure white /= black
+
+    -- | Move a piece. No rules validation yet: the origin square must hold one of the mover's pieces.
+    -- A move implicitly declines any pending draw offer.
+    choice Move : ContractId Game with
+        actor : Party
+        fromSq : Square
+        toSq : Square
+      controller actor
+      do
+        assertMsg "not your turn" (actor == (if turn == White then white else black))
+        piece <- case TextMap.lookup fromSq board of
+          None -> abort ("no piece on " <> fromSq)
+          Some pc -> pure pc
+        assertMsg "not your piece" (isPrefixOf (if turn == White then "w" else "b") piece)
+        assertMsg "from and to are the same square" (fromSq /= toSq)
+        create this with
+          board = TextMap.insert toSq piece (TextMap.delete fromSq board)
+          turn = if turn == White then Black else White
+          moveCount = moveCount + 1
+          drawOfferedBy = None
+
+    choice Resign : ContractId GameResult with
+        actor : Party
+      controller actor
+      do
+        assertMsg "not a player" (actor == white || actor == black)
+        create GameResult with
+          white
+          black
+          board
+          moveCount
+          outcome = if actor == white then BlackWins else WhiteWins
+          reason = "resignation"
+
+    choice OfferDraw : ContractId Game with
+        actor : Party
+      controller actor
+      do
+        assertMsg "not a player" (actor == white || actor == black)
+        assertMsg "a draw offer is already pending" (isNone drawOfferedBy)
+        create this with drawOfferedBy = Some actor
+
+    choice RetractDraw : ContractId Game with
+        actor : Party
+      controller actor
+      do
+        assertMsg "you have no pending draw offer" (drawOfferedBy == Some actor)
+        create this with drawOfferedBy = None
+
+    choice DeclineDraw : ContractId Game with
+        actor : Party
+      controller actor
+      do
+        assertMsg "not a player" (actor == white || actor == black)
+        assertMsg "no draw offer from your opponent" (drawOfferedBy == Some (if actor == white then black else white))
+        create this with drawOfferedBy = None
+
+    choice AcceptDraw : ContractId GameResult with
+        actor : Party
+      controller actor
+      do
+        assertMsg "not a player" (actor == white || actor == black)
+        assertMsg "no draw offer from your opponent" (drawOfferedBy == Some (if actor == white then black else white))
+        create GameResult with
+          white
+          black
+          board
+          moveCount
+          outcome = Drawn
+          reason = "draw by agreement"
+
+-- | A finished game, kept on the ledger for both players.
+template GameResult with
+    white : Party
+    black : Party
+    board : TextMap Piece
+    moveCount : Int
+    outcome : Outcome
+    reason : Text
+  where
+    signatory white, black

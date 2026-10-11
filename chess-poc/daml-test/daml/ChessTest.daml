@@ -1,0 +1,123 @@
+module ChessTest where
+
+import Daml.Script
+import DA.Assert ((===))
+import DA.TextMap qualified as TextMap
+import Chess
+
+challengeAccept : Script ()
+challengeAccept = do
+  alice <- allocateParty "alice"
+  bob <- allocateParty "bob"
+  lobby <- allocateParty "lobby"
+
+  c <- submit alice do
+    createCmd Challenge with creator = alice; opponent = bob; lobby; creatorColor = Black
+
+  -- lobby sees the open challenge
+  open <- query @Challenge lobby
+  length open === 1
+
+  g <- submit bob do exerciseCmd c Accept
+  Some game <- queryContractId alice g
+  game.white === bob
+  game.black === alice
+  game.turn === White
+  TextMap.size game.board === 32
+
+  -- the challenge is gone, and the lobby no longer sees it
+  none <- query @Challenge lobby
+  length none === 0
+
+challengeRejected : Script ()
+challengeRejected = do
+  alice <- allocateParty "alice"
+  bob <- allocateParty "bob"
+  lobby <- allocateParty "lobby"
+  -- cannot challenge yourself
+  submitMustFail alice do
+    createCmd Challenge with creator = alice; opponent = alice; lobby; creatorColor = White
+  c <- submit alice do
+    createCmd Challenge with creator = alice; opponent = bob; lobby; creatorColor = White
+  -- only the opponent may accept
+  submitMustFail alice do exerciseCmd c Accept
+  submit bob do exerciseCmd c Decline
+
+-- Helper: alice challenges bob and plays Black, so bob is White and moves first.
+startGame : Script (Party, Party, Party, ContractId Game)
+startGame = do
+  alice <- allocateParty "alice"
+  bob <- allocateParty "bob"
+  lobby <- allocateParty "lobby"
+  c <- submit alice do
+    createCmd Challenge with creator = alice; opponent = bob; lobby; creatorColor = Black
+  g <- submit bob do exerciseCmd c Accept
+  pure (alice, bob, lobby, g)
+
+moves : Script ()
+moves = do
+  (alice, bob, _, g0) <- startGame
+  -- alice (black) cannot move first
+  submitMustFail alice do exerciseCmd g0 Move with actor = alice; fromSq = "e7"; toSq = "e5"
+  -- bob cannot move from an empty square, or move black's piece, or stay put
+  submitMustFail bob do exerciseCmd g0 Move with actor = bob; fromSq = "e4"; toSq = "e5"
+  submitMustFail bob do exerciseCmd g0 Move with actor = bob; fromSq = "e7"; toSq = "e5"
+  submitMustFail bob do exerciseCmd g0 Move with actor = bob; fromSq = "e2"; toSq = "e2"
+  g1 <- submit bob do exerciseCmd g0 Move with actor = bob; fromSq = "e2"; toSq = "e4"
+  Some game <- queryContractId alice g1
+  game.turn === Black
+  game.moveCount === 1
+  TextMap.lookup "e4" game.board === Some "wP"
+  TextMap.lookup "e2" game.board === None
+  -- the old version is archived
+  old <- queryContractId alice g0
+  old === None
+  -- now it is black's turn, not white's
+  submitMustFail bob do exerciseCmd g1 Move with actor = bob; fromSq = "d2"; toSq = "d4"
+  g2 <- submit alice do exerciseCmd g1 Move with actor = alice; fromSq = "e7"; toSq = "e5"
+  Some game2 <- queryContractId bob g2
+  game2.turn === White
+  game2.moveCount === 2
+
+resigning : Script ()
+resigning = do
+  (alice, bob, lobby, g) <- startGame
+  r <- submit alice do exerciseCmd g Resign with actor = alice
+  Some result <- queryContractId bob r
+  result.outcome === WhiteWins   -- bob is white
+  result.reason === "resignation"
+  -- the game is over
+  games <- query @Game bob
+  length games === 0
+  -- the lobby never sees games or results
+  seen <- query @GameResult lobby
+  length seen === 0
+
+drawOffers : Script ()
+drawOffers = do
+  (alice, bob, _, g0) <- startGame
+  submitMustFail alice do exerciseCmd g0 AcceptDraw with actor = alice      -- nothing offered yet
+  g1 <- submit bob do exerciseCmd g0 OfferDraw with actor = bob
+  submitMustFail alice do exerciseCmd g1 OfferDraw with actor = alice       -- one offer at a time
+  submitMustFail bob do exerciseCmd g1 AcceptDraw with actor = bob          -- cannot accept own offer
+  submitMustFail bob do exerciseCmd g1 DeclineDraw with actor = bob
+  submitMustFail alice do exerciseCmd g1 RetractDraw with actor = alice     -- not alice's offer
+  -- retract
+  g2 <- submit bob do exerciseCmd g1 RetractDraw with actor = bob
+  Some a <- queryContractId alice g2
+  a.drawOfferedBy === None
+  -- decline
+  g3 <- submit bob do exerciseCmd g2 OfferDraw with actor = bob
+  g4 <- submit alice do exerciseCmd g3 DeclineDraw with actor = alice
+  Some b <- queryContractId bob g4
+  b.drawOfferedBy === None
+  -- a move by the other side clears a pending offer
+  g5 <- submit alice do exerciseCmd g4 OfferDraw with actor = alice
+  g6 <- submit bob do exerciseCmd g5 Move with actor = bob; fromSq = "e2"; toSq = "e4"
+  Some c <- queryContractId alice g6
+  c.drawOfferedBy === None
+  -- accept ends the game as a draw
+  g7 <- submit alice do exerciseCmd g6 OfferDraw with actor = alice
+  r <- submit bob do exerciseCmd g7 AcceptDraw with actor = bob
+  Some result <- queryContractId alice r
+  result.outcome === Drawn

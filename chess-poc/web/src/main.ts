@@ -13,6 +13,7 @@ import {
 const COUNTER = '#chess-poc:Counter:Counter'
 const CHALLENGE = '#chess-poc:Chess:Challenge'
 const GAME = '#chess-poc:Chess:Game'
+const RESULT = '#chess-poc:Chess:GameResult'
 
 type Config = { players: Record<string, string>; lobby: string }
 type Challenge = {
@@ -26,6 +27,14 @@ type Game = {
     black: string
     board: Record<string, string>
     turn: 'White' | 'Black'
+    moveCount: string
+    drawOfferedBy?: string | null
+}
+type GameResult = {
+    white: string
+    black: string
+    outcome: string
+    reason: string
     moveCount: string
 }
 
@@ -57,6 +66,7 @@ function renderShell() {
         </section>
         <section><h4>Challenges</h4><ul id="challenges"></ul></section>
         <section><h4>Games</h4><ul id="games"></ul></section>
+        <section><h4>Results</h4><ul id="results"></ul></section>
         <section><h4>Counters (milestone 1)</h4><button id="new">New counter</button><ul id="counters"></ul></section>`
 
     app.querySelector('#challenge')!.addEventListener('click', () =>
@@ -78,6 +88,40 @@ function renderShell() {
     )
 }
 
+const FILES = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']
+
+function asciiBoard(board: Record<string, string>) {
+    return [8, 7, 6, 5, 4, 3, 2, 1]
+        .map(
+            (r) =>
+                `${r} ` +
+                FILES.map((f) => (board[f + r] ?? '..').padEnd(2)).join(' ')
+        )
+        .concat(['  ' + FILES.map((f) => f + ' ').join(' ')])
+        .join('\n')
+}
+
+function gameHtml(cid: string, g: Game) {
+    const me = party === g.white ? 'White' : party === g.black ? 'Black' : null
+    const myTurn = me === g.turn
+    const opponent = party === g.white ? g.black : g.white
+    let draw: string
+    if (g.drawOfferedBy == null)
+        draw = `<button data-act="OfferDraw" data-cid="${cid}">Offer draw</button>`
+    else if (g.drawOfferedBy === party)
+        draw = `<button data-act="RetractDraw" data-cid="${cid}">Retract draw offer</button>`
+    else
+        draw = `${nameOf(opponent)} offers a draw
+            <button data-act="AcceptDraw" data-cid="${cid}">Accept draw</button>
+            <button data-act="DeclineDraw" data-cid="${cid}">Decline draw</button>`
+    return `<li class="game">
+        ${nameOf(g.white)} (white) vs ${nameOf(g.black)} (black), ${g.turn} to move, move ${g.moveCount}
+        <pre>${asciiBoard(g.board)}</pre>
+        ${myTurn ? `<input class="from" size="2" placeholder="e2"> to <input class="to" size="2" placeholder="e4"> <button data-act="Move" data-cid="${cid}">Move</button>` : ''}
+        <button data-act="Resign" data-cid="${cid}">Resign</button> ${draw}
+    </li>`
+}
+
 /** Replace a list's contents only if they changed. */
 function setList(id: string, html: string) {
     if (lastHtml[id] === html) return
@@ -89,10 +133,11 @@ async function refresh() {
     if (polling) return
     polling = true
     try {
-        const [counters, challenges, games] = await Promise.all([
+        const [counters, challenges, games, results] = await Promise.all([
             queryActive<{ value: string }>(party, COUNTER),
             queryActive<Challenge>(party, CHALLENGE),
             queryActive<Game>(party, GAME),
+            queryActive<GameResult>(party, RESULT),
         ])
         setList(
             'challenges',
@@ -112,9 +157,15 @@ async function refresh() {
         setList(
             'games',
             games
+                .map(({ contractId, payload }) => gameHtml(contractId, payload))
+                .join('')
+        )
+        setList(
+            'results',
+            results
                 .map(
-                    ({ payload: g }) =>
-                        `<li>${nameOf(g.white)} (white) vs ${nameOf(g.black)} (black), ${g.turn} to move, move ${g.moveCount}</li>`
+                    ({ payload: r }) =>
+                        `<li>${nameOf(r.white)} (white) vs ${nameOf(r.black)} (black): ${r.outcome} by ${r.reason} after ${r.moveCount} moves</li>`
                 )
                 .join('')
         )
@@ -153,8 +204,26 @@ app.addEventListener('click', (e) => {
         'button[data-act]'
     )
     if (!b) return
-    const tpl = b.dataset.act === 'Increment' ? COUNTER : CHALLENGE
-    run(() => exercise(party, tpl, b.dataset.cid!, b.dataset.act!))
+    const act = b.dataset.act!
+    const cid = b.dataset.cid!
+    if (act === 'Increment')
+        return void run(() => exercise(party, COUNTER, cid, act))
+    if (['Accept', 'Decline', 'Cancel'].includes(act))
+        return void run(() => exercise(party, CHALLENGE, cid, act))
+    // Game choices all take `actor`; Move also reads the squares typed next to the button.
+    const arg: Record<string, string> = { actor: party }
+    if (act === 'Move') {
+        const li = b.closest('li')!
+        arg.fromSq = li
+            .querySelector<HTMLInputElement>('.from')!
+            .value.trim()
+            .toLowerCase()
+        arg.toSq = li
+            .querySelector<HTMLInputElement>('.to')!
+            .value.trim()
+            .toLowerCase()
+    }
+    run(() => exercise(party, GAME, cid, act, arg))
 })
 
 async function main() {
