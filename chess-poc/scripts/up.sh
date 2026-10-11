@@ -36,10 +36,18 @@ sed -e "s|@PARTICIPANT_ID@|$PARTICIPANT_ID|" -e "s|@SYNCHRONIZER_ID@|$SYNC_ID|" 
 "$ROOT/scripts/deploy-dar.sh"
 WORKDIR="$RUN" start gateway node "$REPO/wallet-gateway/remote/dist/index.js" -c "$RUN/config.json"
 waitfor gateway http://127.0.0.1:3030/
+# Players: self-issued users, each with an authentication party created through the gateway UI.
+USERS="${CHESS_USERS:-alice bob lobby}"
+for u in $USERS; do node "$ROOT/scripts/onboard.mjs" "$u"; done
 # Web app: production build + preview (the Vite dev server breaks the SDK's wallet-picker popup).
+# Party ids change on every reset, so the app reads them from config.json written next to the build.
 (cd "$ROOT/web" && ./node_modules/.bin/vite build >/dev/null 2>&1)
+curl -sf -H "Authorization: Bearer $ADMIN" http://127.0.0.1:7575/v2/parties | USERS="$USERS" python3 -c '
+import json, os, sys
+parties = [p["party"] for p in json.load(sys.stdin)["partyDetails"]]
+players = {u: next(p for p in parties if p.startswith(u + "::")) for u in os.environ["USERS"].split()}
+json.dump({"players": players, "lobby": players.get("lobby")}, open(sys.argv[1], "w"), indent=2)
+' "$ROOT/web/dist/config.json"
 WORKDIR="$ROOT/web" start web ./node_modules/.bin/vite preview --port 5173 --host 0.0.0.0 --strictPort
 waitfor web http://localhost:5173/
-# Players: self-issued users, each with an authentication party created through the gateway UI.
-for u in ${CHESS_USERS:-alice bob lobby}; do node "$ROOT/scripts/onboard.mjs" "$u"; done
-echo "Stack is up. Gateway UI http://localhost:3030"
+echo "Stack is up. Gateway UI http://localhost:3030, app http://localhost:5173"

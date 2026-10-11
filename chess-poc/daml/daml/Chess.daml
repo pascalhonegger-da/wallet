@@ -1,0 +1,61 @@
+module Chess where
+
+import DA.TextMap (TextMap)
+import qualified DA.TextMap as TextMap
+
+data Color = White | Black
+  deriving (Eq, Show)
+
+type Square = Text  -- "a1" .. "h8"
+type Piece = Text   -- colour + kind, e.g. "wP", "bK"
+
+-- | Standard starting position.
+initialBoard : TextMap Piece
+initialBoard = TextMap.fromList (back "1" "w" ++ pawns "2" "w" ++ pawns "7" "b" ++ back "8" "b")
+  where
+    files = ["a", "b", "c", "d", "e", "f", "g", "h"]
+    kinds = ["R", "N", "B", "Q", "K", "B", "N", "R"]
+    back rank c = zip (map (<> rank) files) (map (c <>) kinds)
+    pawns rank c = map (\f -> (f <> rank, c <> "P")) files
+
+-- | An invitation to play. The lobby party observes it so open challenges are discoverable.
+template Challenge with
+    creator : Party
+    opponent : Party
+    lobby : Party
+    creatorColor : Color
+  where
+    signatory creator
+    observer opponent, lobby
+    ensure creator /= opponent
+
+    choice Accept : ContractId Game
+      controller opponent
+      do
+        let (white, black) = case creatorColor of
+              White -> (creator, opponent)
+              Black -> (opponent, creator)
+        create Game with
+          white
+          black
+          board = initialBoard
+          turn = White
+          moveCount = 0
+
+    choice Decline : ()
+      controller opponent
+      do pure ()
+
+    choice Cancel : ()
+      controller creator
+      do pure ()
+
+template Game with
+    white : Party
+    black : Party
+    board : TextMap Piece
+    turn : Color
+    moveCount : Int
+  where
+    signatory white, black
+    ensure white /= black
