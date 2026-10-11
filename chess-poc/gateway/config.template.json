@@ -1,0 +1,77 @@
+{
+    "kernel": {
+        "id": "remote-da",
+        "clientType": "remote"
+    },
+    "logging": {
+        "level": "info",
+        "format": "pretty"
+    },
+    "server": {
+        "port": 3030,
+        "dappPath": "/api/v0/dapp",
+        "userPath": "/api/v0/user",
+        "allowedOrigins": ["http://localhost:5173", "http://127.0.0.1:5173"],
+        "requestSizeLimit": "5mb",
+        "requestRateLimit": 10000,
+        "trustProxy": false,
+        "admin": "sub",
+        "signingWorker": {
+            "pollInterval": 5000
+        }
+    },
+    "signingStore": {
+        "connection": {
+            "type": "sqlite",
+            "database": "signing_store.sqlite"
+        }
+    },
+    "store": {
+        "connection": {
+            "type": "sqlite",
+            "database": "store.sqlite"
+        }
+    },
+    "bootstrap": {
+        "idps": [
+            {
+                "id": "idp-mock-oauth",
+                "type": "oauth",
+                "issuer": "http://127.0.0.1:8889",
+                "configUrl": "http://127.0.0.1:8889/.well-known/openid-configuration"
+            },
+            {
+                "id": "idp-self-issued",
+                "type": "self_issued"
+            }
+        ],
+        "networks": [
+            {
+                "id": "canton:chess",
+                "name": "Chess",
+                "description": "Self-issued party tokens; admin via mock OAuth",
+                "identityProviderId": "idp-self-issued",
+                "synchronizerId": "@SYNCHRONIZER_ID@",
+                "auth": {
+                    "method": "self_issued",
+                    "audience": "@PARTICIPANT_ID@",
+                    "scope": "openid daml_ledger_api offline_access"
+                },
+                "adminAuth": {
+                    "method": "client_credentials",
+                    "identityProviderId": "idp-mock-oauth",
+                    "scope": "daml_ledger_api",
+                    "audience": "https://chess.local",
+                    "clientId": "participant_admin",
+                    "clientSecret": "admin-client-secret"
+                },
+                "ledgerApi": {
+                    "baseUrl": "http://127.0.0.1:7575"
+                }
+            }
+        ]
+    },
+    "hashingScheme": {
+        "version": "HASHING_SCHEME_VERSION_V3"
+    }
+}
