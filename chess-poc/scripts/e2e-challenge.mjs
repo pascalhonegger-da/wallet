@@ -7,38 +7,59 @@ const b = await launch()
 const [alice, bob, lobby] = await Promise.all(
     ['alice', 'bob', 'lobby'].map((u) => login(b, u))
 )
+const timed = async (label, f) => {
+    const t = Date.now()
+    await f()
+    console.log(`${label}: ${((Date.now() - t) / 1000).toFixed(1)}s`)
+}
+
+// Polling must not reset a form the user is filling in.
+await bob.page.locator('#color').selectOption('Black')
 
 await alice.page.locator('#opponent').selectOption({ label: 'bob' })
 await alice.page.locator('#color').selectOption('Black')
 await alice.approve(() => alice.page.locator('#challenge').click())
-await waitText(alice.page, 'alice challenges bob (alice plays Black)')
 
-// refresh the others (polling comes in milestone 4)
-await Promise.all(
-    [bob, lobby].map((u) =>
-        u.page.reload().then(() => u.page.getByText('New counter').waitFor())
-    )
-)
-console.log('connected after reload?')
-await waitText(lobby.page, 'alice challenges bob')
-console.log('lobby sees the open challenge')
+await Promise.all([
+    timed('lobby sees challenge', () =>
+        waitText(lobby.page, 'alice challenges bob (alice plays Black)')
+    ),
+    timed('bob sees challenge', () =>
+        waitText(bob.page, 'alice challenges bob (alice plays Black)')
+    ),
+])
 console.log(
-    'lobby offered buttons:',
-    await lobby.page.locator('#challenges button').count()
+    'lobby buttons:',
+    await lobby.page.locator('#challenges button').count(),
+    '| alice buttons:',
+    await alice.page.locator('#challenges button').allInnerTexts()
+)
+console.log(
+    'bob form kept across polls:',
+    await bob.page.locator('#color').inputValue()
 )
 
 await bob.approve(() => bob.page.getByText('Accept', { exact: true }).click())
-await waitText(bob.page, 'bob (white) vs alice (black)')
-console.log('bob sees the game: bob is white')
-await alice.page.reload()
-await alice.page.getByText('New counter').waitFor()
-await waitText(alice.page, 'bob (white) vs alice (black)')
-await lobby.page.reload()
-await lobby.page.getByText('New counter').waitFor()
+await Promise.all([
+    timed('bob sees game', () =>
+        waitText(bob.page, 'bob (white) vs alice (black)')
+    ),
+    timed('alice sees game', () =>
+        waitText(alice.page, 'bob (white) vs alice (black)')
+    ),
+    timed('challenge vanishes for lobby', () =>
+        lobby.page.waitForFunction(
+            () => document.querySelectorAll('#challenges li').length === 0,
+            null,
+            { timeout: 20000 }
+        )
+    ),
+])
+await lobby.page.waitForTimeout(5000)
 console.log(
     'lobby games:',
     await lobby.page.locator('#games li').count(),
-    '| lobby challenges:',
-    await lobby.page.locator('#challenges li').count()
+    '| alice challenges:',
+    await alice.page.locator('#challenges li').count()
 )
 await b.close()
