@@ -38,20 +38,28 @@ async function approve(action) {
     if (!ap) throw new Error('no approval page appeared')
     await ap.getByText('Approve', { exact: true }).click()
 }
-const items = () => p.locator('li').count()
+const state = () =>
+    p
+        .locator('li')
+        .evaluateAll((els) => els.map((e) => parseInt(e.textContent)))
+const waitState = (pred, what) =>
+    p.waitForFunction(pred, null, { timeout: 20000 }).catch(() => {
+        throw new Error('timeout: ' + what)
+    })
+
+const before = await state()
 await approve(() => p.getByText('New counter').click())
-await p.locator('li').first().waitFor({ timeout: 20000 })
-console.log(
-    'counters after create:',
-    await items(),
-    '->',
-    await p.locator('li').first().innerText()
+await waitState(
+    `document.querySelectorAll('li').length === ${before.length + 1}`,
+    'counter created'
 )
+const mid = await state()
+console.log('create:', before.length, '->', mid.length, 'counters')
+const sum = (xs) => xs.reduce((a, b) => a + b, 0)
 await approve(() => p.locator('li button').first().click())
-await p.waitForFunction(
-    () => document.querySelector('li')?.textContent?.startsWith('1'),
-    null,
-    { timeout: 20000 }
+await waitState(
+    `[...document.querySelectorAll('li')].reduce((a, e) => a + parseInt(e.textContent), 0) === ${sum(mid) + 1}`,
+    'increment'
 )
-console.log('after +1:', await p.locator('li').first().innerText())
+console.log('increment: total', sum(mid), '->', sum(await state()))
 await b.close()

@@ -18,6 +18,14 @@ export async function init() {
     })
 }
 
+/** The user's primary party. */
+export async function primaryParty(): Promise<string> {
+    const accounts = await sdk.listAccounts()
+    const account = accounts.find((a) => a.primary) ?? accounts[0]
+    if (!account) throw new Error('wallet has no parties')
+    return account.partyId
+}
+
 type Json = Record<string, unknown>
 
 async function api(
@@ -25,11 +33,10 @@ async function api(
     resource: string,
     body?: Json
 ) {
-    const res = await sdk.ledgerApi({ requestMethod, resource, body } as never)
-    const r = res as unknown as { response?: unknown }
-    return typeof r.response === 'string'
-        ? JSON.parse(r.response)
-        : (r.response ?? res)
+    const res: unknown = await sdk.ledgerApi({ requestMethod, resource, body })
+    // The gateway returns the parsed ledger response; the docs show a JSON string under `.response`.
+    const wrapped = (res as { response?: unknown }).response
+    return typeof wrapped === 'string' ? JSON.parse(wrapped) : (wrapped ?? res)
 }
 
 export type Contract<T> = { contractId: string; payload: T }
@@ -78,12 +85,30 @@ export async function queryActive<T>(
         })
 }
 
-const submit = (party: string, command: Json) =>
-    sdk.prepareExecuteAndWait({
-        commandId: crypto.randomUUID(),
-        actAs: [party],
-        commands: [command],
-    } as never)
+/** prepareExecute, resolved once the gateway reports this command as executed (rejects on failure). */
+async function submit(party: string, command: Json): Promise<void> {
+    const commandId = crypto.randomUUID()
+    let listener: Parameters<typeof sdk.onTxChanged>[0] | undefined
+    const done = new Promise<void>((resolve, reject) => {
+        listener = (e) => {
+            if (e.commandId !== commandId) return
+            if (e.status === 'executed') resolve()
+            if (e.status === 'failed')
+                reject(new Error('transaction failed or was rejected'))
+        }
+    })
+    await sdk.onTxChanged(listener!)
+    try {
+        await sdk.prepareExecute({
+            commandId,
+            actAs: [party],
+            commands: [command],
+        } as never)
+        await done
+    } finally {
+        await sdk.removeOnTxChanged(listener!)
+    }
+}
 
 export const create = (
     party: string,
@@ -101,13 +126,5 @@ export const exercise = (
     submit(party, {
         ExerciseCommand: { templateId, contractId, choice, choiceArgument },
     })
-
-/** Primary account via the CIP-103 provider (the high-level SDK has no wrapper for it in this checkout). */
-export async function primaryParty(): Promise<string> {
-    const provider = sdk.getConnectedProvider()
-    if (!provider) throw new Error('not connected')
-    const account = await provider.request({ method: 'getPrimaryAccount' })
-    return account.partyId
-}
 
 export { sdk }

@@ -54,6 +54,11 @@ async function main() {
     app.innerHTML = '<button id="connect">Connect wallet</button>'
     const start = async () => {
         party = await primaryParty()
+        // The user can switch their primary party in the wallet: re-read it instead of caching.
+        await sdk.onAccountsChanged(async () => {
+            party = await primaryParty()
+            await render()
+        })
         await render()
     }
     if (
