@@ -65,6 +65,7 @@ export function mountBoard(el: HTMLElement, o: BoardOptions): Board {
             })
         },
         live: () => {
+            if (!el.classList.contains('past')) return // already live: do not disturb a piece the user just picked up
             el.classList.remove('past')
             cg.set({
                 fen: position,

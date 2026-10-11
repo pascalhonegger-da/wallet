@@ -19,12 +19,25 @@ export async function connectFlow(ctx, page, user, trigger) {
     )
     await gw.locator('input').first().fill(user)
     await gw.getByText('Connect', { exact: true }).click()
-    await gw.getByText('Select', { exact: true }).click()
+    // a first-time user has to create their authentication party (the gateway's onboarding page) before selecting it
+    await Promise.race([
+        gw.waitForURL('**/onboarding/**', { timeout: 20000 }),
+        gw.getByText('Select', { exact: true }).waitFor({ timeout: 20000 }),
+    ])
+    if (gw.url().includes('onboarding')) {
+        await gw.getByPlaceholder('Enter the name of your wallet?').fill(user)
+        await gw.locator('select').first().selectOption({ index: 1 }) // wallet-kernel
+        await gw.getByText('Create party', { exact: true }).click()
+        return // a new party is connected right away, there is nothing to select
+    }
+    await gw.getByText('Select', { exact: true }).click({ timeout: 30000 })
 }
 
 /** Open the dApp as `user` (already onboarded): connect through the gateway popup and select the auth party. */
-export async function login(browser, user) {
-    const ctx = await browser.newContext()
+export async function login(browser, user, { register = true } = {}) {
+    const ctx = await browser.newContext({
+        viewport: { width: 1280, height: 1000 },
+    })
     const page = await ctx.newPage()
     page.on('dialog', (d) => {
         console.log(`[${user}] DIALOG:`, d.message())
@@ -34,8 +47,11 @@ export async function login(browser, user) {
     await connectFlow(ctx, page, user, () =>
         page.getByText('Connect wallet').click()
     )
-    await page.getByText('New challenge').waitFor()
-    return {
+    await page
+        .locator('#signup:not([hidden]), #lobby:not([hidden])')
+        .first()
+        .waitFor()
+    const me = {
         user,
         page,
         ctx,
@@ -72,6 +88,11 @@ export async function login(browser, user) {
             await ap.close()
         },
     }
+    if (register && (await page.locator('#signup:not([hidden])').count())) {
+        await me.approve(() => page.getByText('Create chess account').click())
+        await page.locator('#lobby:not([hidden])').waitFor({ timeout: 30000 })
+    }
+    return me
 }
 
 async function until(page, f, what, tries = 150) {

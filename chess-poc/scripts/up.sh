@@ -36,18 +36,19 @@ sed -e "s|@PARTICIPANT_ID@|$PARTICIPANT_ID|" -e "s|@SYNCHRONIZER_ID@|$SYNC_ID|" 
 "$ROOT/scripts/deploy-dar.sh"
 WORKDIR="$RUN" start gateway node "$REPO/wallet-gateway/remote/dist/index.js" -c "$RUN/config.json"
 waitfor gateway http://127.0.0.1:3030/
-# Players: self-issued users, each with an authentication party created through the gateway UI.
-USERS="${CHESS_USERS:-alice bob lobby}"
-for u in $USERS; do node "$ROOT/scripts/onboard.mjs" "$u"; done
+# The lobby is an internal party operated by a bot (scripts/lobby-bot.mjs) through the admin identity. Players sign
+# up themselves in the app: nothing is created for them here.
+LOBBY=$(curl -sf -X POST http://127.0.0.1:7575/v2/parties -H "Authorization: Bearer $ADMIN" -H 'Content-Type: application/json' \
+  -d '{"partyIdHint":"lobby","identityProviderId":""}' | sed -E 's/.*"party":"([^"]+)".*/\1/')
+curl -sf -X POST http://127.0.0.1:7575/v2/users/participant_admin/rights -H "Authorization: Bearer $ADMIN" \
+  -H 'Content-Type: application/json' \
+  -d "{\"userId\":\"participant_admin\",\"identityProviderId\":\"\",\"rights\":[{\"kind\":{\"CanActAs\":{\"value\":{\"party\":\"$LOBBY\"}}}},{\"kind\":{\"CanReadAs\":{\"value\":{\"party\":\"$LOBBY\"}}}}]}" >/dev/null
+echo "lobby $LOBBY"
+WORKDIR="$ROOT" start lobbybot node "$ROOT/scripts/lobby-bot.mjs" "$LOBBY"
 # Web app: production build + preview (the Vite dev server breaks the SDK's wallet-picker popup).
-# Party ids change on every reset, so the app reads them from web/public/config.json (copied into every build).
+# The lobby party id changes on every reset, so the app reads it from web/public/config.json (copied into every build).
 mkdir -p "$ROOT/web/public"
-curl -sf -H "Authorization: Bearer $ADMIN" http://127.0.0.1:7575/v2/parties | USERS="$USERS" python3 -c '
-import json, os, sys
-parties = [p["party"] for p in json.load(sys.stdin)["partyDetails"]]
-players = {u: next(p for p in parties if p.startswith(u + "::")) for u in os.environ["USERS"].split()}
-json.dump({"players": players, "lobby": players.get("lobby")}, open(sys.argv[1], "w"), indent=2)
-' "$ROOT/web/public/config.json"
+echo "{\"lobby\": \"$LOBBY\"}" > "$ROOT/web/public/config.json"
 (cd "$ROOT/web" && ./node_modules/.bin/vite build > "$RUN/web-build.log" 2>&1) || { tail -30 "$RUN/web-build.log"; echo "web build failed"; exit 1; }
 WORKDIR="$ROOT/web" start web ./node_modules/.bin/vite preview --port 5173 --host 0.0.0.0 --strictPort
 waitfor web http://localhost:5173/

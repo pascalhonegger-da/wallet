@@ -5,7 +5,7 @@ import { api, queryActive } from './ledger'
 import { transactions } from './history'
 
 type Json = Record<string, unknown>
-const TEMPLATES = ['Challenge', 'Game', 'GameResult']
+const TEMPLATES = ['Player', 'Challenge', 'Game', 'GameResult']
 
 const short = (id: unknown) =>
     typeof id === 'string' && id.length > 24

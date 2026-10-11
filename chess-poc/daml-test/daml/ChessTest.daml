@@ -131,6 +131,27 @@ challengeAccept = do
   none <- query @Challenge lobby
   length none === 0
 
+-- | Self-service sign-up: players only see each other once the lobby introduced them.
+signUp : Script ()
+signUp = do
+  alice <- allocateParty "alice"
+  bob <- allocateParty "bob"
+  lobby <- allocateParty "lobby"
+  pa <- submit alice do createCmd Player with player = alice; lobby; friends = []
+  pb <- submit bob do createCmd Player with player = bob; lobby; friends = []
+  -- the lobby sees both, the players only themselves
+  length <$> query @Player lobby >>= (=== 2)
+  length <$> query @Player alice >>= (=== 1)
+  -- only the lobby can introduce; a player cannot add themselves to someone else's contract
+  submitMustFail bob do exerciseCmd pa Introduce with others = [bob]
+  pa2 <- submit lobby do exerciseCmd pa Introduce with others = [bob, alice, bob]
+  _ <- submit lobby do exerciseCmd pb Introduce with others = [alice]
+  length <$> query @Player alice >>= (=== 2)
+  length <$> query @Player bob >>= (=== 2)
+  Some a <- queryContractId alice pa2
+  a.friends === [bob]
+  pure ()
+
 -- | Who has to sign what: a challenge only needs its creator, a game needs both players.
 authorization : Script ()
 authorization = do

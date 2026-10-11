@@ -12,8 +12,10 @@ browser ── dApp SDK ──► Wallet Gateway :3030 ──► Canton 3.6 sand
 
 ## What it does
 
-- **Challenge**: a player challenges another (choosing their colour). A `lobby` party observes every challenge,
-  so the lobby view shows all open challenges.
+- **Sign up** (self-service): nobody exists after a reset. A new player connects through the wallet (the gateway
+  creates their party on first login), then clicks **Create chess account**, which creates a `Player` contract signed
+  by them. Registered players appear in each other's opponent list, which grows as people sign up.
+- **Challenge**: a player challenges another (choosing their colour). The `lobby` party observes every challenge.
 - **Accept** creates a `Game` with both players as signatories and white/black assigned. Decline / cancel are
   also available.
 - **Play**: drag pieces on a [Chessground](https://github.com/lichess-org/chessground) board (the lichess board library, GPL-3.0; it only offers legal moves). `Move` is a
@@ -46,7 +48,7 @@ chess clock.
 
 ## What is stored where
 
-- **Ledger contracts**: `Challenge` (creator, opponent, lobby, colour), `Game` (white, black, `fen`,
+- **Ledger contracts**: `Player` (player, lobby, friends), `Challenge` (creator, opponent, lobby, colour), `Game` (white, black, `fen`,
   `drawOfferedBy`, `positions`) and `GameResult` (white, black, final `fen`, outcome, reason). Every move archives
   the `Game` and creates the next version, so a move is one consuming `Move` exercise.
 - **`positions`** (in `Game`) counts how often each position occurred since the last pawn move or capture. It is the
@@ -55,7 +57,7 @@ chess clock.
   `san` argument and the contract it created; `web/src/history.ts` reads them from `/v2/updates` (through the
   gateway's `ledgerApi`) and follows the chain back from a game or result.
 - **Wallet Gateway**: sessions, the party-to-user mapping and the party signing keys (its `wallet-kernel` provider).
-- **Browser**: nothing persistent. The board is drawn from the FEN; party ids come from `web/public/config.json`.
+- **Browser**: nothing persistent. The board is drawn from the FEN; the lobby party id comes from `web/public/config.json`.
 
 On a move, the page asks chess.js for the SAN, the SDK's `prepareExecuteAndWait` sends `Move {actor, san}`, the
 gateway prepares the transaction (this is where Daml runs the rules; an illegal move fails here and no approval
@@ -63,12 +65,22 @@ window opens), you approve it in the gateway popup, the gateway signs with your 
 mover signs: a consuming choice runs with the authority of the contract's signatories, so the new `Game`, which
 has both players as signatories, is authorised. The other page sees it on its next 2 second poll.
 
+## How players find each other
+
+A player's self-issued token only lets them read their own party, so there is no public party all players could
+read. Sign-up therefore works through an operator: the `lobby`, an internal party (allocated by `up.sh`, no
+gateway login) run by `scripts/lobby-bot.mjs`. A `Player` contract is signed by the player and has the lobby as
+observer. The bot notices new ones and exercises `Introduce` to add every registered player to every other
+player's `friends` (observers), after which they can see each other's contracts, so the opponent dropdown fills up. The bot acts
+as the lobby through the mock-OAuth admin user (`up.sh` grants it `CanActAs` on the lobby). Introductions take
+about a second.
+
 ## Prerequisites
 
 - Java (tested with 25) and Node 24 with pnpm, as for the rest of this repo.
 - `dpm` with SDK 3.6.0 (`dpm install 3.6.0`). The scripts pin it with `DPM_SDK_VERSION=3.6.0`.
   Canton 3.6 is required: self-issued (`party-jwt`) tokens only exist from 3.6.
-- Headless Chromium for Playwright (used by `up.sh` to onboard the players, and by the e2e scripts).
+- Headless Chromium for Playwright (used by the e2e scripts).
 - The workspace packages must be built once. `docs/CONTRIBUTING.md` documents `pnpm install` then
   `pnpm build:all`; this PoC was developed with targeted builds instead
   (`pnpm nx build @canton-network/wallet-gateway-remote` and `pnpm --filter @canton-network/dapp-sdk build`),
@@ -80,14 +92,14 @@ has both players as signatories, is authorised. The other page sees it on its ne
 ## Run, reset, stop
 
 ```bash
-chess-poc/scripts/up.sh      # start everything, deploy the DAR, onboard alice/bob/lobby
+chess-poc/scripts/up.sh      # start everything and deploy the DAR (no players: they sign up themselves)
 chess-poc/scripts/reset.sh   # wipe all state and start again (the ledger is in-memory)
 chess-poc/scripts/down.sh    # stop everything
 ```
 
 `up.sh` takes a couple of minutes. It starts the mock OAuth server, the Canton sandbox, the gateway, builds and
-serves the web app, and onboards three self-issued users (`alice`, `bob`, `lobby`) by driving the gateway UI
-headlessly. Override the list with `CHESS_USERS="alice bob carol lobby" up.sh`. Logs are in `chess-poc/.run/`.
+serves the web app, creates the internal `lobby` party and starts the lobby bot (see "How players find each other").
+Logs are in `chess-poc/.run/`.
 
 Resources, measured for the Canton sandbox alone: about 1.3 GB RAM, near-zero CPU when idle (a few hundred percent
 for ~30 s at startup). Total for the stack was not separately measured.
@@ -107,21 +119,21 @@ window, both on **http://localhost:5173**. The app and the gateway must be reach
 and allowed origin are `localhost`).
 
 1. Click **Connect wallet**, pick **Local Gateway**. In the gateway popup enter a username (`alice` in one
-   browser, `bob` in the other) and click Connect, then **Select** on the authentication party.
-2. Alice picks bob and a colour, clicks **Challenge**, and approves the transaction in the gateway popup.
+   browser, `bob` in the other) and click Connect. A first-time user is taken through the gateway's onboarding page:
+   enter any wallet name, keep the signing provider selection (`wallet-kernel`), click **Create party**. A returning
+   user clicks **Select** on their party instead.
+2. Click **Create chess account** and approve the transaction. You now see the lobby and the other players.
+3. Alice picks bob and a colour, clicks **Challenge**, and approves the transaction in the gateway popup.
    Every action goes through that approval page (Approve / Reject).
-3. Bob sees the challenge within ~2 s and clicks **Accept**.
-4. Play by dragging pieces. A move snaps back and appears once the transaction is confirmed.
-5. Use `lobby` in a third window to watch the open challenges.
-
-If you use any other username than the onboarded ones, the gateway will ask you to create an authentication
-party on first login, but the app only offers the players listed in `web/public/config.json` as opponents.
+4. Bob sees the challenge within ~2 s and clicks **Accept**.
+5. Play by dragging pieces. A move snaps back and appears once the transaction is confirmed.
 
 ## Tests
 
 ```bash
 chess-poc/scripts/test-daml.sh          # Daml script tests (separate daml-test package), incl. perft counts
-node chess-poc/scripts/e2e-challenge.mjs# challenges, accept, lobby, polling
+node chess-poc/scripts/e2e-signup.mjs   # self-service sign-up and the lobby bot (needs an empty ledger)
+node chess-poc/scripts/e2e-challenge.mjs# challenges, accept, what the lobby sees, polling
 node chess-poc/scripts/e2e-game.mjs     # moves on the board, an illegal move, mate note, castling, draws, resignation
 node chess-poc/scripts/e2e-views.mjs    # looking back at positions, opening past games, the console helpers
 node chess-poc/scripts/e2e-race.mjs     # lost races and double clicks
@@ -141,14 +153,14 @@ daml/          Chess.daml (Challenge, Game, GameResult); the DAR
 daml-test/     Daml script tests, a separate package that depends on the built DAR
 gateway/       sandbox auth config and the gateway config template (filled in by up.sh)
 web/           the dApp: Vite + TypeScript, dApp SDK, Chessground, chess.js
-scripts/       up/down/reset, deploy-dar, onboard (headless), e2e checks
+scripts/       up/down/reset, deploy-dar, the lobby bot, e2e checks
 ```
 
 ## Problems hit and decisions
 
 - **Canton version.** The default `dpm` SDK was 3.5.x. `party-jwt` (self-issued tokens) needs 3.6, so the
-  sandbox is pinned to 3.6. `dpm sandbox` also rejects `--bootstrap`, so users are created by onboarding rather
-  than by a script.
+  sandbox is pinned to 3.6. `dpm sandbox` also rejects `--bootstrap`, so users are created by the gateway's
+  onboarding (the player's first login) rather than by a script.
 - **Token audience.** Canton's default audience contains the participant id, which changes on every in-memory
   reset. The mock OAuth identity (used only for the gateway's admin calls) uses a fixed audience
   (`target-audience` in `gateway/sandbox-auth.conf`); the self-issued audience _is_ the participant id, so

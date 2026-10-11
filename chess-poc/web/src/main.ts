@@ -26,8 +26,10 @@ import {
 const CHALLENGE = '#chess-poc:Chess:Challenge'
 const GAME = '#chess-poc:Chess:Game'
 const RESULT = '#chess-poc:Chess:GameResult'
+const PLAYER = '#chess-poc:Chess:Player'
 
-type Config = { players: Record<string, string>; lobby: string }
+type Config = { lobby: string }
+type Player = { player: string; lobby: string; friends: string[] }
 type Challenge = {
     creator: string
     opponent: string
@@ -52,9 +54,8 @@ const app = document.getElementById('app')!
 let party = ''
 let config: Config
 
-const nameOf = (p: string) =>
-    Object.entries(config.players).find(([, id]) => id === p)?.[0] ??
-    p.split('::')[0]
+/** Party ids look like `alice::1220…`: the part before `::` is the name the player signed up with. */
+const nameOf = (p: string) => p.split('::')[0]
 
 const POLL_MS = 2000
 let timer: ReturnType<typeof setInterval> | undefined
@@ -67,23 +68,39 @@ const lastHtml: Record<string, string> = {}
 
 /** Static part of the page: rendered once so polling never resets form inputs. */
 function renderShell() {
-    const opponents = Object.entries(config.players).filter(
-        ([n, id]) => id !== party && n !== 'lobby'
-    )
     app.innerHTML = `
         <header><span class="logo">♞ Canton Chess</span><span>You are <b>${nameOf(party)}</b> <small id="status"></small> <small id="waiting"></small></span></header>
-        <div id="message" role="alert" ></div>
+        <div id="message" role="alert"></div>
+        <section id="signup" hidden>
+            <h4>Welcome, ${nameOf(party)}</h4>
+            <p>Create a chess account so other players can see you and challenge you. This publishes a small contract
+            that only says that you play here.</p>
+            <button id="create-account">Create chess account</button>
+        </section>
+        <div id="lobby" hidden>
+        <section><h4>Games</h4><ul id="games"></ul></section>
         <section id="new-challenge">
             <h4>New challenge</h4>
-            <select id="opponent">${opponents.map(([n, id]) => `<option value="${id}">${n}</option>`).join('')}</select>
+            <select id="opponent"></select>
             <select id="color"><option>White</option><option>Black</option></select>
             <button id="challenge">Challenge</button>
+            <span id="no-players" hidden>No other players have signed up yet.</span>
         </section>
+        <section><h4>Players</h4><div id="players"></div></section>
         <section><h4>Challenges</h4><ul id="challenges"></ul></section>
-        <section><h4>Games</h4><ul id="games"></ul></section>
         <section><h4>Results</h4><ul id="results"></ul></section>
+        </div>
         <footer>For the ledger state in raw form open the browser console and run <code>chessDebug.contracts()</code> or <code>chessDebug.events()</code> (<code>chessDebug.help()</code> lists more).</footer>`
 
+    app.querySelector('#create-account')!.addEventListener('click', () =>
+        run(() =>
+            create(party, PLAYER, {
+                player: party,
+                lobby: config.lobby,
+                friends: [],
+            })
+        )
+    )
     app.querySelector('#challenge')!.addEventListener('click', () =>
         run(() =>
             create(party, CHALLENGE, {
@@ -234,6 +251,35 @@ function renderMoves(
     board.show(r.fens[ply], r.last[ply])
 }
 
+/** Sign-up state: without a `Player` contract of your own you only see the sign-up card; the other players you can
+ * challenge are the registered players the lobby introduced to you. */
+function showPlayers(visible: Player[]) {
+    const registered = visible.some((p) => p.player === party)
+    document.getElementById('signup')!.hidden = registered
+    document.getElementById('lobby')!.hidden = !registered
+    const others = [
+        ...new Set(visible.map((p) => p.player).filter((p) => p !== party)),
+    ].sort((a, b) => nameOf(a).localeCompare(nameOf(b)))
+    const select = document.getElementById('opponent') as HTMLSelectElement
+    const wanted = others.join(',')
+    if (select.dataset.players !== wanted) {
+        const chosen = select.value
+        select.dataset.players = wanted
+        select.innerHTML = others
+            .map((p) => `<option value="${p}">${nameOf(p)}</option>`)
+            .join('')
+        if (others.includes(chosen)) select.value = chosen // keep the selection while the list grows
+    }
+    document.getElementById('no-players')!.hidden = others.length > 0
+    ;(document.getElementById('challenge') as HTMLButtonElement).hidden =
+        others.length === 0
+    select.hidden = others.length === 0
+    document.getElementById('players')!.textContent = [
+        `you (${nameOf(party)})`,
+        ...others.map(nameOf),
+    ].join(', ')
+}
+
 /** Replace a list's contents only if they changed. */
 function setList(id: string, html: string): boolean {
     if (lastHtml[id] === html) return false
@@ -246,11 +292,13 @@ async function refresh() {
     if (polling || paused) return
     polling = true
     try {
-        const [challenges, games, results] = await Promise.all([
+        const [registered, challenges, games, results] = await Promise.all([
+            queryActive<Player>(party, PLAYER),
             queryActive<Challenge>(party, CHALLENGE),
             queryActive<Game>(party, GAME),
             queryActive<GameResult>(party, RESULT),
         ])
+        showPlayers(registered.map((c) => c.payload))
         setList(
             'challenges',
             challenges
