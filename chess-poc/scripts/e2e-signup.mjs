@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Self-service sign-up: nobody exists after `reset.sh`; players create their account in the app and see each other
-// through the lobby bot. Needs an empty ledger (run right after reset.sh).
+// through the public lobby party. Needs an empty ledger (run right after reset.sh).
 import { launch, login } from './lib/browser.mjs'
 
 const b = await launch()
@@ -37,7 +37,10 @@ await alice.page
 await bob.page
     .locator('#opponent option', { hasText: 'alice' })
     .waitFor({ state: 'attached', timeout: 20000 })
-ok('alice and bob see each other (introduced by the lobby bot)', true)
+ok(
+    'alice and bob see each other (via the lobby party everybody may read)',
+    true
+)
 
 // carol: the third player appears for both
 const carol = await login(b, 'carol')

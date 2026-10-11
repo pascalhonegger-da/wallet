@@ -20,7 +20,7 @@ export function installDebug(getParty: () => string) {
                 [
                     'chessDebug.contracts()  active contracts visible to you (table + raw JSON returned)',
                     'chessDebug.events()     every ledger event you can see, oldest first (table + raw JSON returned)',
-                    'chessDebug.raw(path)    GET a JSON Ledger API path through the wallet gateway, e.g. "/v2/state/ledger-end"',
+                    'chessDebug.raw(path, body?)  GET (or POST with a body) a JSON Ledger API path through the wallet gateway, e.g. "/v2/state/ledger-end"',
                     'Contract ids are shortened in the tables; the returned objects have them in full.',
                 ].join('\n')
             )
@@ -91,7 +91,8 @@ export function installDebug(getParty: () => string) {
             )
             return rows
         },
-        raw: (path: string) => api('get', path),
+        raw: (path: string, body?: Json) =>
+            body ? api('post', path, body) : api('get', path),
     }
     Object.assign(window, { chessDebug: debug })
     console.info(

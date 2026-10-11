@@ -36,15 +36,12 @@ sed -e "s|@PARTICIPANT_ID@|$PARTICIPANT_ID|" -e "s|@SYNCHRONIZER_ID@|$SYNC_ID|" 
 "$ROOT/scripts/deploy-dar.sh"
 WORKDIR="$RUN" start gateway node "$REPO/wallet-gateway/remote/dist/index.js" -c "$RUN/config.json"
 waitfor gateway http://127.0.0.1:3030/
-# The lobby is an internal party operated by a bot (scripts/lobby-bot.mjs) through the admin identity. Players sign
-# up themselves in the app: nothing is created for them here.
+# The lobby is a "public" party: players sign up themselves in the app, and scripts/grant-lobby-read.mjs gives every
+# player's ledger user the CanReadAs right for the lobby, so everybody can read the Player contracts it observes.
 LOBBY=$(curl -sf -X POST http://127.0.0.1:7575/v2/parties -H "Authorization: Bearer $ADMIN" -H 'Content-Type: application/json' \
   -d '{"partyIdHint":"lobby","identityProviderId":""}' | sed -E 's/.*"party":"([^"]+)".*/\1/')
-curl -sf -X POST http://127.0.0.1:7575/v2/users/participant_admin/rights -H "Authorization: Bearer $ADMIN" \
-  -H 'Content-Type: application/json' \
-  -d "{\"userId\":\"participant_admin\",\"identityProviderId\":\"\",\"rights\":[{\"kind\":{\"CanActAs\":{\"value\":{\"party\":\"$LOBBY\"}}}},{\"kind\":{\"CanReadAs\":{\"value\":{\"party\":\"$LOBBY\"}}}}]}" >/dev/null
 echo "lobby $LOBBY"
-WORKDIR="$ROOT" start lobbybot node "$ROOT/scripts/lobby-bot.mjs" "$LOBBY"
+WORKDIR="$ROOT" start grantread node "$ROOT/scripts/grant-lobby-read.mjs" "$LOBBY"
 # Web app: production build + preview (the Vite dev server breaks the SDK's wallet-picker popup).
 # The lobby party id changes on every reset, so the app reads it from web/public/config.json (copied into every build).
 mkdir -p "$ROOT/web/public"

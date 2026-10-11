@@ -29,7 +29,7 @@ const RESULT = '#chess-poc:Chess:GameResult'
 const PLAYER = '#chess-poc:Chess:Player'
 
 type Config = { lobby: string }
-type Player = { player: string; lobby: string; friends: string[] }
+type Player = { player: string; lobby: string }
 type Challenge = {
     creator: string
     opponent: string
@@ -97,7 +97,6 @@ function renderShell() {
             create(party, PLAYER, {
                 player: party,
                 lobby: config.lobby,
-                friends: [],
             })
         )
     )
@@ -252,7 +251,7 @@ function renderMoves(
 }
 
 /** Sign-up state: without a `Player` contract of your own you only see the sign-up card; the other players you can
- * challenge are the registered players the lobby introduced to you. */
+ * challenge are all registered players, which everybody reads through the lobby party. */
 function showPlayers(visible: Player[]) {
     const registered = visible.some((p) => p.player === party)
     document.getElementById('signup')!.hidden = registered
@@ -292,13 +291,15 @@ async function refresh() {
     if (polling || paused) return
     polling = true
     try {
-        const [registered, challenges, games, results] = await Promise.all([
+        const [own, everyone, challenges, games, results] = await Promise.all([
             queryActive<Player>(party, PLAYER),
+            // readable once the player's user was granted CanReadAs for the lobby (a second or so after first login)
+            queryActive<Player>(config.lobby, PLAYER).catch(() => []),
             queryActive<Challenge>(party, CHALLENGE),
             queryActive<Game>(party, GAME),
             queryActive<GameResult>(party, RESULT),
         ])
-        showPlayers(registered.map((c) => c.payload))
+        showPlayers([...own, ...everyone].map((c) => c.payload))
         setList(
             'challenges',
             challenges

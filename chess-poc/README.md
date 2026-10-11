@@ -48,7 +48,7 @@ chess clock.
 
 ## What is stored where
 
-- **Ledger contracts**: `Player` (player, lobby, friends), `Challenge` (creator, opponent, lobby, colour), `Game` (white, black, `fen`,
+- **Ledger contracts**: `Player` (player, lobby), `Challenge` (creator, opponent, lobby, colour), `Game` (white, black, `fen`,
   `drawOfferedBy`, `positions`) and `GameResult` (white, black, final `fen`, outcome, reason). Every move archives
   the `Game` and creates the next version, so a move is one consuming `Move` exercise.
 - **`positions`** (in `Game`) counts how often each position occurred since the last pawn move or capture. It is the
@@ -67,13 +67,16 @@ has both players as signatories, is authorised. The other page sees it on its ne
 
 ## How players find each other
 
-A player's self-issued token only lets them read their own party, so there is no public party all players could
-read. Sign-up therefore works through an operator: the `lobby`, an internal party (allocated by `up.sh`, no
-gateway login) run by `scripts/lobby-bot.mjs`. A `Player` contract is signed by the player and has the lobby as
-observer. The bot notices new ones and exercises `Introduce` to add every registered player to every other
-player's `friends` (observers), after which they can see each other's contracts, so the opponent dropdown fills up. The bot acts
-as the lobby through the mock-OAuth admin user (`up.sh` grants it `CanActAs` on the lobby). Introductions take
-about a second.
+The `lobby` is a _public party_: an internal party (allocated by `up.sh`, nobody logs in as it) that every player's
+ledger user may read as. A `Player` contract is signed by the player and has the lobby as observer, so everybody who
+can read as the lobby sees every registration, and the opponent dropdown grows as people sign up.
+
+A player's self-issued token takes its rights from the ledger user the gateway creates on first login, so the
+`CanReadAs(lobby)` right only has to be added to that user. The gateway has no hook for it, so
+`scripts/grant-lobby-read.mjs` (about 30 lines, started by `up.sh`) polls the user list once a second and grants it
+to every new user, using the mock-OAuth admin identity. Until then (about a second after the first login) the lobby
+query fails and the app only shows the player's own contract. Verified: a fresh user's read as the lobby fails
+before the grant and succeeds right after it, without a new token.
 
 ## Prerequisites
 
@@ -98,7 +101,7 @@ chess-poc/scripts/down.sh    # stop everything
 ```
 
 `up.sh` takes a couple of minutes. It starts the mock OAuth server, the Canton sandbox, the gateway, builds and
-serves the web app, creates the internal `lobby` party and starts the lobby bot (see "How players find each other").
+serves the web app, creates the public `lobby` party and starts the small grant script (see "How players find each other").
 Logs are in `chess-poc/.run/`.
 
 Resources, measured for the Canton sandbox alone: about 1.3 GB RAM, near-zero CPU when idle (a few hundred percent
@@ -132,7 +135,7 @@ and allowed origin are `localhost`).
 
 ```bash
 chess-poc/scripts/test-daml.sh          # Daml script tests (separate daml-test package), incl. perft counts
-node chess-poc/scripts/e2e-signup.mjs   # self-service sign-up and the lobby bot (needs an empty ledger)
+node chess-poc/scripts/e2e-signup.mjs   # self-service sign-up and the public lobby (needs an empty ledger)
 node chess-poc/scripts/e2e-challenge.mjs# challenges, accept, what the lobby sees, polling
 node chess-poc/scripts/e2e-game.mjs     # moves on the board, an illegal move, mate note, castling, draws, resignation
 node chess-poc/scripts/e2e-views.mjs    # looking back at positions, opening past games, the console helpers
@@ -153,7 +156,7 @@ daml/          Chess.daml (Challenge, Game, GameResult); the DAR
 daml-test/     Daml script tests, a separate package that depends on the built DAR
 gateway/       sandbox auth config and the gateway config template (filled in by up.sh)
 web/           the dApp: Vite + TypeScript, dApp SDK, Chessground, chess.js
-scripts/       up/down/reset, deploy-dar, the lobby bot, e2e checks
+scripts/       up/down/reset, deploy-dar, the read-right grant script, e2e checks
 ```
 
 ## Problems hit and decisions

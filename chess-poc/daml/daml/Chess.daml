@@ -1,6 +1,6 @@
 module Chess where
 
-import DA.List (dedup, findIndex, (!!))
+import DA.List (findIndex, (!!))
 import DA.Optional (fromSomeNote, isNone, isSome)
 import DA.Text qualified as T
 import DA.TextMap (TextMap)
@@ -395,23 +395,15 @@ moveFromSan pos s
 
 -- Contracts --------------------------------------------------------------------
 
--- | A registered player ("chess account"), created by the player themselves. A player's access token only
--- reads that player's own party, so there is no public party everyone could read. Instead the lobby, an
--- operator that runs a small bot, introduces players to each other: it adds every registered player to the
--- `friends` of every other one, which makes their `Player` contracts visible to each other.
+-- | A registered player ("chess account"), created by the player themselves. The lobby is a public party: every
+-- player's ledger user is granted the `CanReadAs` right for it (see scripts/grant-lobby-read.mjs), so everybody can
+-- read the `Player` contracts it observes and the list of players grows as people sign up.
 template Player with
     player : Party
     lobby : Party
-    friends : [Party]
   where
     signatory player
-    observer lobby, friends
-
-    -- the lobby adds newly registered players as observers (consuming: needs the player's authority as signatory)
-    choice Introduce : ContractId Player with
-        others : [Party]
-      controller lobby
-      do create this with friends = friends ++ dedup (filter (\o -> o /= player && o `notElem` friends) others)
+    observer lobby
 
     choice Leave : ()
       controller player

@@ -20,12 +20,14 @@ export async function connectFlow(ctx, page, user, trigger) {
     await gw.locator('input').first().fill(user)
     await gw.getByText('Connect', { exact: true }).click()
     // a first-time user has to create their authentication party (the gateway's onboarding page) before selecting it
-    await Promise.race([
-        gw.waitForURL('**/onboarding/**', { timeout: 20000 }),
-        gw.getByText('Select', { exact: true }).waitFor({ timeout: 20000 }),
+    const nameInput = gw.getByPlaceholder('Enter the name of your wallet?')
+    const select = gw.getByText('Select', { exact: true })
+    const first = await Promise.race([
+        nameInput.waitFor({ timeout: 20000 }).then(() => 'new'),
+        select.waitFor({ timeout: 20000 }).then(() => 'existing'),
     ])
-    if (gw.url().includes('onboarding')) {
-        await gw.getByPlaceholder('Enter the name of your wallet?').fill(user)
+    if (first === 'new') {
+        await nameInput.fill(user)
         await gw.locator('select').first().selectOption({ index: 1 }) // wallet-kernel
         await gw.getByText('Create party', { exact: true }).click()
         return // a new party is connected right away, there is nothing to select

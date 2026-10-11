@@ -7,65 +7,46 @@ import { launch, login, waitText } from './lib/browser.mjs'
 const b = await launch()
 const [alice, bob] = await Promise.all(['alice', 'bob'].map((u) => login(b, u)))
 
-// The lobby is an internal party operated through the admin identity, not a player with a login:
-// ask the ledger what it sees (challenges are the only game contracts it observes).
+// The lobby is a public party nobody logs in as: players may read as it (CanReadAs), so ask the ledger through
+// alice's session what the lobby sees (challenges are the only game contracts it observes).
 const lobbyParty = JSON.parse(
     readFileSync(new URL('../web/public/config.json', import.meta.url))
 ).lobby
-async function lobbySees(template) {
-    const tok = (
-        await (
-            await fetch('http://127.0.0.1:8889/token', {
-                method: 'POST',
-                headers: {
-                    Authorization:
-                        'Basic ' +
-                        Buffer.from(
-                            'participant_admin:admin-client-secret'
-                        ).toString('base64'),
-                    'Content-Type': 'application/x-www-form-urlencoded',
-                },
-                body: 'grant_type=client_credentials&scope=daml_ledger_api&audience=https://chess.local',
-            })
-        ).json()
-    ).access_token
-    const h = {
-        Authorization: `Bearer ${tok}`,
-        'Content-Type': 'application/json',
-    }
-    const { offset } = await (
-        await fetch('http://127.0.0.1:7575/v2/state/ledger-end', { headers: h })
-    ).json()
-    const items = await (
-        await fetch('http://127.0.0.1:7575/v2/state/active-contracts', {
-            method: 'POST',
-            headers: h,
-            body: JSON.stringify({
-                eventFormat: {
-                    filtersByParty: {
-                        [lobbyParty]: {
-                            cumulative: [
-                                {
-                                    identifierFilter: {
-                                        TemplateFilter: {
-                                            value: {
-                                                templateId: `#chess-poc:Chess:${template}`,
-                                                includeCreatedEventBlob: false,
+const lobbySees = (template) =>
+    alice.page.evaluate(
+        async ([lobby, template]) => {
+            const { offset } = await window.chessDebug.raw(
+                '/v2/state/ledger-end'
+            )
+            const items = await window.chessDebug.raw(
+                '/v2/state/active-contracts',
+                {
+                    eventFormat: {
+                        filtersByParty: {
+                            [lobby]: {
+                                cumulative: [
+                                    {
+                                        identifierFilter: {
+                                            TemplateFilter: {
+                                                value: {
+                                                    templateId: `#chess-poc:Chess:${template}`,
+                                                    includeCreatedEventBlob: false,
+                                                },
                                             },
                                         },
                                     },
-                                },
-                            ],
+                                ],
+                            },
                         },
+                        verbose: false,
                     },
-                    verbose: false,
-                },
-                activeAtOffset: offset,
-            }),
-        })
-    ).json()
-    return items.length
-}
+                    activeAtOffset: offset,
+                }
+            )
+            return items.length
+        },
+        [lobbyParty, template]
+    )
 const ok = (label, cond) => {
     console.log(`${cond ? 'ok  ' : 'FAIL'} ${label}`)
     if (!cond) process.exitCode = 1
