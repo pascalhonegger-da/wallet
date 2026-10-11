@@ -48,7 +48,7 @@ parties = [p["party"] for p in json.load(sys.stdin)["partyDetails"]]
 players = {u: next(p for p in parties if p.startswith(u + "::")) for u in os.environ["USERS"].split()}
 json.dump({"players": players, "lobby": players.get("lobby")}, open(sys.argv[1], "w"), indent=2)
 ' "$ROOT/web/public/config.json"
-(cd "$ROOT/web" && ./node_modules/.bin/vite build >/dev/null 2>&1)
+(cd "$ROOT/web" && ./node_modules/.bin/vite build > "$RUN/web-build.log" 2>&1) || { tail -30 "$RUN/web-build.log"; echo "web build failed"; exit 1; }
 WORKDIR="$ROOT/web" start web ./node_modules/.bin/vite preview --port 5173 --host 0.0.0.0 --strictPort
 waitfor web http://localhost:5173/
 echo "Stack is up. Gateway UI http://localhost:3030, app http://localhost:5173"

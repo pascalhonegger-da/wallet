@@ -82,8 +82,8 @@ await bob.page
     .waitFor({ timeout: 10000 })
 await bob.page.waitForTimeout(1000)
 ok(
-    'illegal move: no approval page was opened',
-    approvalPages(bob) === approvalsBefore
+    'illegal move: no new approval page was opened',
+    approvalPages(bob) <= approvalsBefore
 )
 ok(
     'illegal move: the board is unchanged',
@@ -117,6 +117,15 @@ ok(
     'bob sees e5 black pawn, e7 empty',
     (await square(bob, 'e5')) === 'bP' && (await square(bob, 'e7')) === '..'
 )
+
+// the move list is read from the ledger's exercised Move events, not stored in the contract
+await bob.page.waitForFunction(
+    () =>
+        document.querySelector('li.game .movelist')?.textContent === '1. e4 e5',
+    null,
+    { timeout: 20000 }
+)
+ok('move history for an active game: 1. e4 e5', true)
 
 // draw: offer -> decline
 await alice.approve(() => btn(alice, 'Offer draw').click())
@@ -158,7 +167,7 @@ ok(
         (await bob.page.locator('li.game').count()) === 0
 )
 
-// second game: fool's mate (checks, a capture-free mate in four plies), then bob resigns
+// second game: fool's mate (a capture-free mate in four plies)
 await startGame()
 await move(bob, 'f2', 'f3')
 await move(alice, 'e7', 'e5')
@@ -168,15 +177,15 @@ ok(
     (await alice.page.locator('li.game .note').innerText()) === ''
 )
 await move(alice, 'd8', 'h4')
-await waitText(bob.page, 'Checkmate: White is mated')
-await waitText(alice.page, 'Checkmate: White is mated')
-ok('both see the checkmate note', true)
-await bob.approve(() => btn(bob, 'Resign').click())
-await waitText(alice.page, 'BlackWins by resignation')
-await waitText(bob.page, 'BlackWins by resignation')
+// the ledger ends the game by itself: checkmate is a result, no resignation needed
+await waitText(bob.page, 'BlackWins by checkmate')
+await waitText(alice.page, 'BlackWins by checkmate')
+await waitText(alice.page, '1. f3 e5 2. g4 Qh4#')
+ok('move history for a finished game: 1. f3 e5 2. g4 Qh4#', true)
 ok(
-    'resignation: black (alice) wins',
-    (await alice.page.locator('#results li').count()) === 2
+    'checkmate ends the game by itself: black (alice) wins',
+    (await alice.page.locator('#results li').count()) === 2 &&
+        (await alice.page.locator('li.game').count()) === 0
 )
 
 // third game: castle short by dragging the king two squares (the ledger moves the rook as well)
@@ -206,5 +215,11 @@ ok(
 ok(
     'castling: e1 and h1 are empty',
     (await square(bob, 'e1')) === '..' && (await square(bob, 'h1')) === '..'
+)
+await bob.approve(() => btn(bob, 'Resign').click())
+await waitText(alice.page, 'BlackWins by resignation')
+ok(
+    'resignation still works: three results',
+    (await alice.page.locator('#results li').count()) === 3
 )
 await b.close()

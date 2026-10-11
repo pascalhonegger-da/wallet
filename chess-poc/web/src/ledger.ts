@@ -28,12 +28,18 @@ export async function primaryParty(): Promise<string> {
 
 type Json = Record<string, unknown>
 
-async function api(
+export async function api(
     requestMethod: 'get' | 'post',
     resource: string,
-    body?: Json
+    body?: Json,
+    query?: Json
 ) {
-    const res: unknown = await sdk.ledgerApi({ requestMethod, resource, body })
+    const res: unknown = await sdk.ledgerApi({
+        requestMethod,
+        resource,
+        body,
+        query,
+    })
     // The gateway returns the parsed ledger response; the docs show a JSON string under `.response`.
     const wrapped = (res as { response?: unknown }).response
     return typeof wrapped === 'string' ? JSON.parse(wrapped) : (wrapped ?? res)
@@ -85,28 +91,36 @@ export async function queryActive<T>(
         })
 }
 
-/** prepareExecute, resolved once the gateway reports this command as executed (rejects on failure). */
+// The SDK's prepareExecuteAndWait opens the approval window and resolves once the transaction is executed
+// (it rejects if the transaction fails). Its own timeout is five minutes, which would keep the UI locked that
+// long if the player closes the approval window without deciding, so give up earlier.
+let approvalTimeoutMs = 90_000
+export const setApprovalTimeout = (ms: number) => {
+    approvalTimeoutMs = ms
+}
+
 async function submit(party: string, command: Json): Promise<void> {
-    const commandId = crypto.randomUUID()
-    let listener: Parameters<typeof sdk.onTxChanged>[0] | undefined
-    const done = new Promise<void>((resolve, reject) => {
-        listener = (e) => {
-            if (e.commandId !== commandId) return
-            if (e.status === 'executed') resolve()
-            if (e.status === 'failed')
-                reject(new Error('transaction failed or was rejected'))
-        }
-    })
-    await sdk.onTxChanged(listener!)
+    let timer: ReturnType<typeof setTimeout> | undefined
     try {
-        await sdk.prepareExecute({
-            commandId,
-            actAs: [party],
-            commands: [command],
-        } as never)
-        await done
+        await Promise.race([
+            sdk.prepareExecuteAndWait({
+                actAs: [party],
+                commands: [command],
+            } as never),
+            new Promise<never>((_, reject) => {
+                timer = setTimeout(
+                    () =>
+                        reject(
+                            new Error(
+                                'No answer from the wallet. Was the approval window closed? If you approve it later the result will show up here.'
+                            )
+                        ),
+                    approvalTimeoutMs
+                )
+            }),
+        ])
     } finally {
-        await sdk.removeOnTxChanged(listener!)
+        clearTimeout(timer)
     }
 }
 

@@ -8,8 +8,10 @@ import {
     primaryParty,
     queryActive,
     sdk,
+    setApprovalTimeout,
 } from './ledger'
 import { mountBoard } from './board'
+import { movesOf, movesText, refreshHistory } from './history'
 import {
     boardOf,
     checkMove,
@@ -58,6 +60,8 @@ let timer: ReturnType<typeof setInterval> | undefined
 let polling = false
 let paused = false // test hook: lets the e2e check act on a deliberately stale view
 let busy = false // one submission at a time: prevents double clicks
+let failures = 0 // consecutive failed polls: two or more means the session has probably expired
+let historyStale = false // the last history read failed: retry on the next poll
 const lastHtml: Record<string, string> = {}
 
 /** Static part of the page: rendered once so polling never resets form inputs. */
@@ -66,7 +70,7 @@ function renderShell() {
         ([n, id]) => id !== party && n !== 'lobby'
     )
     app.innerHTML = `
-        <h3>You are <b>${nameOf(party)}</b> <small id="status"></small></h3>
+        <h3>You are <b>${nameOf(party)}</b> <small id="status"></small> <small id="waiting"></small></h3>
         <div id="message" role="alert" style="color: #b00020"></div>
         <section id="new-challenge">
             <h4>New challenge</h4>
@@ -128,6 +132,7 @@ function gameHtml(cid: string, g: Game) {
     return `<li class="game" data-cid="${cid}">
         ${nameOf(g.white)} (white) vs ${nameOf(g.black)} (black), ${turn} to move, move ${fullmoveOf(g.fen)}
         <div class="note">${positionNote(g.fen)}</div>
+        <div class="movelist" data-cid="${cid}"></div>
         <div class="board" style="width: 320px"></div>
         <details><summary>text board / type a move</summary>
             <pre>${asciiBoard(boardOf(g.fen))}</pre>
@@ -167,6 +172,21 @@ function mountBoards(games: { contractId: string; payload: Game }[]) {
     }
 }
 
+/** Fill the move lists from the ledger's event history (see history.ts). */
+async function showHistory() {
+    try {
+        await refreshHistory(party)
+        historyStale = false
+    } catch (e) {
+        console.error('could not read the move history', e)
+        historyStale = true
+        return
+    }
+    document.querySelectorAll<HTMLElement>('.movelist').forEach((el) => {
+        el.textContent = movesText(movesOf(el.dataset.cid!))
+    })
+}
+
 /** Replace a list's contents only if they changed. */
 function setList(id: string, html: string): boolean {
     if (lastHtml[id] === html) return false
@@ -203,26 +223,24 @@ async function refresh() {
         currentGames.clear()
         for (const { contractId, payload } of games)
             currentGames.set(contractId, payload)
-        if (
-            setList(
-                'games',
-                games
-                    .map(({ contractId, payload }) =>
-                        gameHtml(contractId, payload)
-                    )
-                    .join('')
-            )
+        const gamesChanged = setList(
+            'games',
+            games
+                .map(({ contractId, payload }) => gameHtml(contractId, payload))
+                .join('')
         )
-            mountBoards(games)
-        setList(
+        if (gamesChanged) mountBoards(games)
+        const resultsChanged = setList(
             'results',
             results
                 .map(
-                    ({ payload: r }) =>
-                        `<li>${nameOf(r.white)} (white) vs ${nameOf(r.black)} (black): ${r.outcome} by ${r.reason} after ${fullmoveOf(r.fen)} moves</li>`
+                    ({ contractId, payload: r }) =>
+                        `<li>${nameOf(r.white)} (white) vs ${nameOf(r.black)} (black): ${r.outcome} by ${r.reason} after ${fullmoveOf(r.fen)} moves
+                        <div class="movelist" data-cid="${contractId}"></div></li>`
                 )
                 .join('')
         )
+        if (gamesChanged || resultsChanged || historyStale) void showHistory()
         setList(
             'counters',
             counters
@@ -232,14 +250,24 @@ async function refresh() {
                 )
                 .join('')
         )
+        failures = 0
         document.getElementById('status')!.textContent = ''
     } catch (e) {
         console.error(e)
-        document.getElementById('status')!.textContent =
-            '(ledger unreachable, retrying)'
+        failures++
+        // The gateway's self-issued access tokens last 10 minutes and are not refreshed.
+        document.getElementById('status')!.innerHTML =
+            failures >= 2
+                ? '(cannot reach the ledger: the session may have expired) <button id="reconnect">Reconnect</button>'
+                : '(ledger unreachable, retrying)'
     } finally {
         polling = false
     }
+}
+
+const setWaiting = (text: string) => {
+    const el = document.getElementById('waiting')
+    if (el) el.textContent = text
 }
 
 let messageTimer: ReturnType<typeof setTimeout> | undefined
@@ -252,7 +280,7 @@ function showMessage(text: string) {
 }
 
 /** Turn ledger/gateway errors into something a player can act on. */
-export function friendlyError(e: unknown): string {
+function friendlyError(e: unknown): string {
     const msg = String((e as Error)?.message ?? e)
     if (
         /CONTRACT_NOT_FOUND|CONTRACT_NOT_ACTIVE|could not be found|not active|inactive|archived|consumed|UNKNOWN_CONTRACT/i.test(
@@ -260,15 +288,25 @@ export function friendlyError(e: unknown): string {
         )
     )
         return 'Too late: the other side changed this first. The view has been refreshed.'
-    const daml = /(?:Aborted|Assertion failed|ABORT)[^:]*:\s*(.+)$/is.exec(msg)
+    if (/failed to execute|rejected/i.test(msg))
+        return 'The wallet rejected the transaction, or it failed.'
+    // Canton wraps what a Daml choice aborted with: "... (error category 9): illegal move: e5"
+    const daml =
+        /\(error category \d+\):\s*(.+)$/s.exec(msg) ??
+        /(?:Aborted|Assertion failed|ABORT)[^:]*:\s*(.+)$/is.exec(msg)
     if (daml) return `Not allowed: ${daml[1].split('\n')[0].trim()}`
     return msg.length > 200 ? msg.slice(0, 200) + '…' : msg
 }
 
 async function run(f: () => Promise<unknown>) {
     if (busy) return
+    if (failures >= 2)
+        return showMessage(
+            'Your session may have expired: use Reconnect at the top of the page.'
+        )
     busy = true
     document.body.classList.add('busy')
+    setWaiting('waiting for the wallet…')
     try {
         await f()
         showMessage('')
@@ -278,12 +316,14 @@ async function run(f: () => Promise<unknown>) {
     } finally {
         busy = false
         document.body.classList.remove('busy')
+        setWaiting('')
     }
     await refresh()
 }
 
 // List buttons are re-created on every update, so listen once on the app root.
 app.addEventListener('click', (e) => {
+    if ((e.target as HTMLElement).id === 'reconnect') return void reconnect()
     const b = (e.target as HTMLElement).closest<HTMLButtonElement>(
         'button[data-act]'
     )
@@ -307,12 +347,12 @@ app.addEventListener('click', (e) => {
     run(() => exercise(party, GAME, cid, act, arg))
 })
 
-async function main() {
-    config = await (await fetch('/config.json')).json()
-    await init()
-    app.innerHTML = '<button id="connect">Connect wallet</button>'
-    const start = async () => {
-        party = await primaryParty()
+let accountsListening = false
+
+async function start() {
+    party = await primaryParty()
+    if (!accountsListening) {
+        accountsListening = true
         // The user can switch their primary party in the wallet: re-read it instead of caching.
         await sdk.onAccountsChanged(async () => {
             party = await primaryParty()
@@ -320,11 +360,30 @@ async function main() {
             renderShell()
             await refresh()
         })
-        renderShell()
-        await refresh()
-        clearInterval(timer)
-        timer = setInterval(refresh, POLL_MS)
     }
+    for (const k of Object.keys(lastHtml)) delete lastHtml[k]
+    renderShell()
+    await refresh()
+    clearInterval(timer)
+    timer = setInterval(refresh, POLL_MS)
+}
+
+/** Log in again through the wallet, e.g. after the session expired. */
+async function reconnect() {
+    try {
+        await sdk.disconnect()
+    } catch (e) {
+        console.error(e)
+    }
+    await sdk.connect()
+    failures = 0
+    await start()
+}
+
+async function main() {
+    config = await (await fetch('/config.json')).json()
+    await init()
+    app.innerHTML = '<button id="connect">Connect wallet</button>'
     if (
         await sdk
             .isConnected()
@@ -337,8 +396,20 @@ async function main() {
         await start()
     })
 }
-// Test hook for the e2e race check.
+// Test hooks for the e2e checks (they have no effect on normal use).
 Object.assign(window, {
-    __chess: { pause: () => (paused = true), resume: () => (paused = false) },
+    __chess: {
+        pause: () => (paused = true),
+        resume: () => (paused = false),
+        setApprovalTimeout,
+        /** Submit a move for the first game exactly as given, skipping the UI's own rule check:
+         * what a modified or misbehaving client could do. */
+        submitSan: (san: string) => {
+            const cid = [...currentGames.keys()][0]
+            return run(() =>
+                exercise(party, GAME, cid, 'Move', { actor: party, san })
+            )
+        },
+    },
 })
 main()

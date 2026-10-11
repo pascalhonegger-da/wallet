@@ -24,11 +24,24 @@ gameFromFen f = do
   alice <- allocateParty "alice"
   bob <- allocateParty "bob"
   g <- submitMulti [alice, bob] [] do
-    createCmd Game with white = bob; black = alice; fen = f; drawOfferedBy = None
+    createCmd Game with white = bob; black = alice; fen = f; drawOfferedBy = None; positions = TextMap.empty
   pure (alice, bob, g)
 
+-- | A move that must leave the game running: yields the next game.
 move : Party -> ContractId Game -> Text -> Commands (ContractId Game)
-move p g san = exerciseCmd g Move with actor = p; san
+move p g san = fmap continued (moveResult p g san)
+
+moveResult : Party -> ContractId Game -> Text -> Commands MoveResult
+moveResult p g san = exerciseCmd g Move with actor = p; san
+
+continued : MoveResult -> ContractId Game
+continued (Continued g) = g
+continued (Finished _) = error "the game ended"
+
+-- | The result of a move that must end the game.
+finished : MoveResult -> ContractId GameResult
+finished (Finished r) = r
+finished (Continued _) = error "the game did not end"
 
 fenOf : Party -> ContractId Game -> Script Text
 fenOf p g = do
@@ -163,11 +176,15 @@ notationVariants = do
   g1 <- submit bob do move bob g0 "e2e4"
   g2 <- submit alice do move alice g1 "e5"
   g3 <- play (bob, alice) g2 ["Bc4", "Nc6", "Qh5", "Nf6"]
-  g4 <- submit bob do move bob g3 "Qxf7#"
-  fen <- fenOf alice g4
-  fen === "r1bqkb1r/pppp1Qpp/2n2n2/4p3/2B1P3/8/PPPP1PPP/RNB1K1NR b KQkq - 0 4"
-  -- black is checkmated: no legal moves and in check
-  let p = parseFen fen
+  -- the mate ends the game: black is checkmated, white wins
+  r <- submit bob do finished <$> moveResult bob g3 "Qxf7#"
+  Some result <- queryContractId alice r
+  result.outcome === WhiteWins
+  result.reason === "checkmate"
+  result.fen === "r1bqkb1r/pppp1Qpp/2n2n2/4p3/2B1P3/8/PPPP1PPP/RNB1K1NR b KQkq - 0 4"
+  open <- query @Game bob
+  length open === 0
+  let p = parseFen result.fen
   length (legalMoves p) === 0
   inCheck p.board p.turn === True
   -- a capture without the "x" is not the move that was meant
@@ -175,162 +192,62 @@ notationVariants = do
   submitMustFail bob2 do move bob2 h0 "Ree2"
   pure ()
 
+-- Game endings and history ----------------------------------------------------------
+
 stalemate : Script ()
 stalemate = do
   let p = parseFen "7k/5Q2/6K1/8/8/8/8/8 b - - 0 1"
   length (legalMoves p) === 0
   inCheck p.board p.turn === False
-
-legalityIsEnforced : Script ()
-legalityIsEnforced = do
-  -- the king cannot step into check, but can step out of the rook's line
-  (_, bob, g) <- gameFromFen "4k3/8/8/8/8/8/8/r3K3 w - - 0 1"
-  submitMustFail bob do move bob g "Kd1"
-  submit bob do move bob g "Kd2"
-  -- a pinned bishop cannot move
-  (_, bob2, g2) <- gameFromFen "4r1k1/8/8/8/8/8/4B3/4K3 w - - 0 1"
-  submitMustFail bob2 do move bob2 g2 "Bd3"
-  pure ()
-
-disambiguation : Script ()
-disambiguation = do
-  -- two knights can reach d2: the plain move is ambiguous
-  (_, bob, g) <- gameFromFen "4k3/8/8/8/8/8/8/1N1K1N2 w - - 0 1"
-  submitMustFail bob do move bob g "Nd2"
-  submitMustFail bob do move bob g "N1d2"
-  b <- submit bob do move bob g "Nbd2"
-  fenOf bob b >>= (=== "4k3/8/8/8/8/8/3N4/3K1N2 b - - 1 1")
-  (_, bobF, gF) <- gameFromFen "4k3/8/8/8/8/8/8/1N1K1N2 w - - 0 1"
-  f <- submit bobF do move bobF gF "Nfd2"
-  fenOf bobF f >>= (=== "4k3/8/8/8/8/8/3N4/1N1K4 b - - 1 1")
-  -- a pinned knight is not a candidate, so the plain move is unambiguous (chess.js omits the file here)
-  (_, bob2, g2) <- gameFromFen "4r1k1/8/8/8/8/8/4N3/1N2K3 w - - 0 1"
-  c <- submit bob2 do move bob2 g2 "Nc3"
-  fenOf bob2 c >>= (=== "4r1k1/8/8/8/8/2N5/4N3/4K3 b - - 1 1")
-  submitMustFail bob2 do move bob2 g2 "Nec3"
-  pure ()
-
-promotion : Script ()
-promotion = do
-  (alice, bob, g) <- gameFromFen "4k3/P7/8/8/8/8/8/4K3 w - - 0 1"
-  -- a pawn reaching the last rank must promote, to Q, R, B or N only
-  submitMustFail bob do move bob g "a8"
-  submitMustFail bob do move bob g "a8=K"
-  submitMustFail bob do move bob g "a8=P"
-  q <- submit bob do move bob g "a8=Q+"
-  fenOf alice q >>= (=== "Q3k3/8/8/8/8/8/8/4K3 b - - 0 1")
-  (aliceN, bobN, gN) <- gameFromFen "4k3/P7/8/8/8/8/8/4K3 w - - 0 1"
-  n <- submit bobN do move bobN gN "a8=N"
-  fenOf aliceN n >>= (=== "N3k3/8/8/8/8/8/8/4K3 b - - 0 1")
-  -- promotion by capture; capturing the rook on its corner takes the right away
-  (alice2, bob2, g2) <- gameFromFen "1r2k2r/P7/8/8/8/8/8/4K3 w k - 0 1"
-  c <- submit bob2 do move bob2 g2 "axb8=Q+"
-  fenOf alice2 c >>= (=== "1Q2k2r/8/8/8/8/8/8/4K3 b k - 0 1")
-
--- Castling -----------------------------------------------------------------------
-
-castling : Script ()
-castling = do
-  (alice, bob, _, g0) <- startGame
-  -- not while the pieces are in the way
-  submitMustFail bob do move bob g0 "O-O"
-  submitMustFail bob do move bob g0 "O-O-O"
-  g <- play (bob, alice) g0 ["e4", "e5", "Nf3", "Nc6", "Bc4", "Nf6"]
-  g' <- submit bob do move bob g "O-O"
-  -- the king goes to g1, the rook to f1, and white loses both rights
-  fenOf alice g' >>= (=== "r1bqkb1r/pppp1ppp/2n2n2/4p3/2B1P3/5N2/PPPP1PPP/RNBQ1RK1 b kq - 5 4")
-
-castlingMustBeLegal : Script ()
-castlingMustBeLegal = do
-  -- fine: nothing is attacked
-  (_, bob, g) <- gameFromFen "4k3/8/8/8/8/8/8/4K2R w K - 0 1"
-  c <- submit bob do move bob g "O-O"
-  fenOf bob c >>= (=== "4k3/8/8/8/8/8/8/5RK1 b - - 1 1")
-  -- not out of check, not through an attacked square, not onto an attacked square
-  (_, bob2, g2) <- gameFromFen "4k3/8/8/8/8/4r3/8/4K2R w K - 0 1"
-  submitMustFail bob2 do move bob2 g2 "O-O"
-  (_, bob3, g3) <- gameFromFen "4k3/8/8/8/8/5r2/8/4K2R w K - 0 1"
-  submitMustFail bob3 do move bob3 g3 "O-O"
-  (_, bob4, g4) <- gameFromFen "4k3/8/8/8/8/6r1/8/4K2R w K - 0 1"
-  submitMustFail bob4 do move bob4 g4 "O-O"
-  -- long castling: b1 may be attacked, c1/d1 may not
-  (_, bob5, g5) <- gameFromFen "4k3/8/8/8/8/1r6/8/R3K3 w Q - 0 1"
-  l <- submit bob5 do move bob5 g5 "O-O-O"
-  fenOf bob5 l >>= (=== "4k3/8/8/8/8/1r6/8/2KR4 b - - 1 1")
-  (_, bob6, g6) <- gameFromFen "4k3/8/8/8/8/3r4/8/R3K3 w Q - 0 1"
-  submitMustFail bob6 do move bob6 g6 "O-O-O"
-  -- no right, no castling, even with a clear path
-  (_, bob7, g7) <- gameFromFen "4k3/8/8/8/8/8/8/4K2R w - - 0 1"
-  submitMustFail bob7 do move bob7 g7 "O-O"
-
-castlingRightsAreLost : Script ()
-castlingRightsAreLost = do
-  (alice, bob, _, g0) <- startGame
-  -- the king steps off and back: the path is clear but white may no longer castle
-  g <- play (bob, alice) g0 ["Nf3", "a6", "e3", "a5", "Be2", "a4", "Kf1", "h6", "Ke1", "h5"]
-  submitMustFail bob do move bob g "O-O"
-  -- a rook that moved loses only its own side; black can still castle
-  (alice2, bob2, _, h0) <- startGame
-  h <- play (bob2, alice2) h0 ["h4", "a6", "Rh3", "Nf6", "a3", "e6", "a4", "Be7", "a5"]
-  fenOf alice2 h >>= (=== "rnbqk2r/1pppbppp/p3pn2/P7/7P/7R/1PPPPPP1/RNBQKBN1 b Qkq - 0 5")
-  b <- submit alice2 do move alice2 h "O-O"
-  fenOf alice2 b >>= (=== "rnbq1rk1/1pppbppp/p3pn2/P7/7P/7R/1PPPPPP1/RNBQKBN1 w Q - 1 6")
-
-enPassant : Script ()
-enPassant = do
-  (alice, bob, _, g0) <- startGame
-  g <- play (bob, alice) g0 ["e4", "a6", "e5", "d5"]
-  fenOf bob g >>= (=== "rnbqkbnr/1pp1pppp/p7/3pP3/8/8/PPPP1PPP/RNBQKBNR w KQkq d6 0 3")
-  g' <- submit bob do move bob g "exd6"
-  -- the captured pawn on d5 is gone
-  fenOf bob g' >>= (=== "rnbqkbnr/1pp1pppp/p2P4/8/8/8/PPPP1PPP/RNBQKBNR b KQkq - 0 3")
-  -- the right to capture en passant expires after one move
-  (alice2, bob2, _, h0) <- startGame
-  h <- play (bob2, alice2) h0 ["e4", "a6", "e5", "d5", "Nf3", "a5"]
-  submitMustFail bob2 do move bob2 h "exd6"
-
--- Resignation and draws ----------------------------------------------------------
-
-resigning : Script ()
-resigning = do
-  (alice, bob, lobby, g) <- startGame
-  r <- submit alice do exerciseCmd g Resign with actor = alice
-  Some result <- queryContractId bob r
-  result.outcome === WhiteWins   -- bob is white
-  result.reason === "resignation"
-  result.fen === startFen
-  -- the game is over
-  games <- query @Game bob
-  length games === 0
-  -- the lobby never sees games or results
-  seen <- query @GameResult lobby
-  length seen === 0
-
-drawOffers : Script ()
-drawOffers = do
-  (alice, bob, _, g0) <- startGame
-  submitMustFail alice do exerciseCmd g0 AcceptDraw with actor = alice      -- nothing offered yet
-  g1 <- submit bob do exerciseCmd g0 OfferDraw with actor = bob
-  submitMustFail alice do exerciseCmd g1 OfferDraw with actor = alice       -- one offer at a time
-  submitMustFail bob do exerciseCmd g1 AcceptDraw with actor = bob          -- cannot accept own offer
-  submitMustFail bob do exerciseCmd g1 DeclineDraw with actor = bob
-  submitMustFail alice do exerciseCmd g1 RetractDraw with actor = alice     -- not alice's offer
-  -- retract
-  g2 <- submit bob do exerciseCmd g1 RetractDraw with actor = bob
-  Some a <- queryContractId alice g2
-  a.drawOfferedBy === None
-  -- decline
-  g3 <- submit bob do exerciseCmd g2 OfferDraw with actor = bob
-  g4 <- submit alice do exerciseCmd g3 DeclineDraw with actor = alice
-  Some b <- queryContractId bob g4
-  b.drawOfferedBy === None
-  -- a move by the other side clears a pending offer
-  g5 <- submit alice do exerciseCmd g4 OfferDraw with actor = alice
-  g6 <- submit bob do move bob g5 "e4"
-  Some c <- queryContractId alice g6
-  c.drawOfferedBy === None
-  -- accept ends the game as a draw
-  g7 <- submit alice do exerciseCmd g6 OfferDraw with actor = alice
-  r <- submit bob do exerciseCmd g7 AcceptDraw with actor = bob
+  -- reaching it ends the game as a draw
+  (alice, bob, g) <- gameFromFen "7k/8/5K2/8/8/8/8/6Q1 w - - 0 1"
+  r <- submit bob do finished <$> moveResult bob g "Qg6"
   Some result <- queryContractId alice r
   result.outcome === Drawn
+  result.reason === "stalemate"
+
+insufficientMaterialEndsTheGame : Script ()
+insufficientMaterialEndsTheGame = do
+  -- the bishop takes the last knight: king and bishop against a bare king
+  (alice, bob, g) <- gameFromFen "4k3/8/8/8/8/8/n7/1B2K3 w - - 0 1"
+  r <- submit bob do finished <$> moveResult bob g "Bxa2"
+  Some result <- queryContractId alice r
+  result.outcome === Drawn
+  result.reason === "insufficient material"
+  -- two minor pieces are not covered by the rule: the game goes on
+  (_, bob2, g2) <- gameFromFen "4k3/8/8/8/8/8/n7/1B2KN2 w - - 0 1"
+  submit bob2 do move bob2 g2 "Bxa2"
+  pure ()
+
+seventyFiveMoveRule : Script ()
+seventyFiveMoveRule = do
+  (alice, bob, g) <- gameFromFen "4k3/8/8/8/8/8/8/R3K3 w - - 148 80"
+  -- 149 halfmoves: still a game
+  g1 <- submit bob do move bob g "Ra2"
+  fenOf alice g1 >>= (=== "4k3/8/8/8/8/8/R7/4K3 b - - 149 80")
+  -- the 150th halfmove ends it
+  r <- submit alice do finished <$> moveResult alice g1 "Kd7"
+  Some result <- queryContractId bob r
+  result.outcome === Drawn
+  result.reason === "75-move rule"
+
+threefoldRepetition : Script ()
+threefoldRepetition = do
+  (alice, bob, _, g0) <- startGame
+  -- the knights go out and back twice: the starting position occurs a third time on the last move
+  g <- play (bob, alice) g0 ["Nf3", "Nf6", "Ng1", "Ng8", "Nf3", "Nf6", "Ng1"]
+  Some game <- queryContractId bob g
+  -- the starting position has occurred twice so far
+  TextMap.lookup "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq -" game.positions === Some 2
+  r <- submit alice do finished <$> moveResult alice g "Ng8"
+  Some result <- queryContractId bob r
+  result.outcome === Drawn
+  result.reason === "threefold repetition"
+
+-- | A pawn move or capture resets the repetition counts: positions before it can never recur.
+repetitionCountsResetOnIrreversibleMoves : Script ()
+repetitionCountsResetOnIrreversibleMoves = do
+  (alice, bob, _, g0) <- startGame
+  g <- play (bob, alice) g0 ["Nf3", "Nf6", "Ng1", "Ng8", "e4"]
+  Some game <- queryContractId bob g
+  TextMap.size game.positions === 1

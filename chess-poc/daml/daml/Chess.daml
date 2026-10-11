@@ -307,6 +307,30 @@ applyMv pos mv =
 legalMoves : Position -> [Mv]
 legalMoves pos = filter (\mv -> not (inCheck (applyMv pos mv).board pos.turn)) (pseudoMoves pos)
 
+-- Game endings -----------------------------------------------------------------
+
+-- | A position without its move counters: the FEN fields that decide whether it repeats.
+positionKey : Text -> Text
+positionKey fen = T.intercalate " " (take 4 (T.splitOn " " fen))
+
+-- | Neither side can mate: bare kings, or a king and a single knight or bishop against a bare king.
+insufficientMaterial : TextMap Piece -> Bool
+insufficientMaterial board = case filter (/= "K") (map (pieceKind . snd) (TextMap.toList board)) of
+  [] -> True
+  [k] -> k `elem` ["N", "B"]
+  _ -> False
+
+-- | Did `mover`'s move end the game? `noMoves` and `checked` describe the side now to move, `seen` is how
+-- often the new position has occurred (including now).
+gameEnding : Color -> Position -> Bool -> Bool -> Int -> Optional (Outcome, Text)
+gameEnding mover pos noMoves checked seen
+  | noMoves && checked = Some (if mover == White then WhiteWins else BlackWins, "checkmate")
+  | noMoves = Some (Drawn, "stalemate")
+  | insufficientMaterial pos.board = Some (Drawn, "insufficient material")
+  | seen >= 3 = Some (Drawn, "threefold repetition")
+  | pos.halfmove >= 150 = Some (Drawn, "75-move rule")
+  | otherwise = None
+
 -- Standard algebraic notation --------------------------------------------------
 
 data San = San with
@@ -393,6 +417,7 @@ template Challenge with
           black
           fen = startFen
           drawOfferedBy = None
+          positions = TextMap.fromList [(positionKey startFen, 1)]
 
     choice Decline : ()
       controller opponent
@@ -405,6 +430,10 @@ template Challenge with
 data Outcome = WhiteWins | BlackWins | Drawn
   deriving (Eq, Show)
 
+-- | What a move leads to: the next game, or the end of the game.
+data MoveResult = Continued (ContractId Game) | Finished (ContractId GameResult)
+  deriving (Eq, Show)
+
 -- | A running game. The position is a single FEN string; every state change archives the game and
 -- creates the next version.
 template Game with
@@ -412,14 +441,19 @@ template Game with
     black : Party
     fen : Text
     drawOfferedBy : Optional Party
+    positions : TextMap Int   -- how often each position (see positionKey) occurred since the last irreversible
+                              -- move. Kept here only because a choice cannot read archived contracts, and
+                              -- repetition needs it. The move list is not stored: the ledger's own history
+                              -- (the exercised Move events) already has it.
   where
     signatory white, black
     ensure white /= black
 
     -- | Play a move given in standard algebraic notation (e.g. "e4", "Nbd7", "exd5", "e8=Q", "O-O").
     -- The ledger resolves it against the position and rejects anything illegal or ambiguous.
-    -- A move implicitly declines any pending draw offer.
-    choice Move : ContractId Game with
+    -- A move implicitly declines any pending draw offer. If it ends the game (checkmate, stalemate,
+    -- insufficient material, threefold repetition, 75-move rule) a GameResult is created instead.
+    choice Move : MoveResult with
         actor : Party
         san : Text
       controller actor
@@ -429,9 +463,24 @@ template Game with
         mv <- case moveFromSan pos san of
           Left err -> abort err
           Right m -> pure m
-        create this with
-          fen = serializeFen (applyMv pos mv)
-          drawOfferedBy = None
+        let next = applyMv pos mv
+            nextFen = serializeFen next
+            noMoves = null (legalMoves next)
+            checked = inCheck next.board next.turn
+            -- positions before an irreversible move (pawn move or capture) can never recur
+            prior = if next.halfmove == 0 then TextMap.empty else positions
+            key = positionKey nextFen
+            seen = optional 0 identity (TextMap.lookup key prior) + 1
+        case gameEnding pos.turn next noMoves checked seen of
+          Some (outcome, reason) -> do
+            r <- create GameResult with white; black; fen = nextFen; outcome; reason
+            pure (Finished r)
+          None -> do
+            g <- create this with
+              fen = nextFen
+              drawOfferedBy = None
+              positions = TextMap.insert key seen prior
+            pure (Continued g)
 
     choice Resign : ContractId GameResult with
         actor : Party

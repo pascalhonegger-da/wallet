@@ -55,14 +55,9 @@ export function checkMove(fen: string, from: string, to: string): MoveCheck {
     return { ok: true, san: move.san }
 }
 
-/** A short note on the position, or '' if there is nothing to report. */
+/** A short note on the position ("X is in check"), or '' if there is nothing to report. The ledger ends the game by
+ * itself on checkmate, stalemate, repetition and so on, so only a check needs a note. */
 export function positionNote(fen: string): string {
     const chess = load(fen)
-    if (!chess) return ''
-    const turn = turnOf(fen)
-    if (chess.isCheckmate())
-        return `Checkmate: ${turn} is mated and should resign.`
-    if (chess.isStalemate()) return 'Stalemate: offer or accept a draw.'
-    if (chess.inCheck()) return `${turn} is in check.`
-    return ''
+    return chess?.inCheck() ? `${turnOf(fen)} is in check.` : ''
 }

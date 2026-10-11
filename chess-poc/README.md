@@ -33,8 +33,29 @@ immediate feedback and to produce the SAN it submits; another client could not c
 The move generator is checked against the published perft node counts for six standard positions
 (`daml-test`), which exercise castling, en passant, promotion and pins.
 
-Not enforced yet: nothing ends a game automatically on checkmate, stalemate, repetition or insufficient material
-(the UI only shows a note on checkmate/stalemate). Players end games with resign or an agreed draw.
+**The game ends by itself** (a `GameResult` is created instead of the next `Game`) on checkmate, stalemate,
+insufficient material (bare kings, or one knight/bishop against a bare king), threefold repetition and the 75-move
+rule. Players can also resign or agree a draw. Not implemented: claiming a draw under the 50-move rule, and the
+chess clock.
+
+## What is stored where
+
+- **Ledger contracts**: `Challenge` (creator, opponent, lobby, colour), `Game` (white, black, `fen`,
+  `drawOfferedBy`, `positions`) and `GameResult` (white, black, final `fen`, outcome, reason). Every move archives
+  the `Game` and creates the next version, so a move is one consuming `Move` exercise.
+- **`positions`** (in `Game`) counts how often each position occurred since the last pawn move or capture. It is the
+  only history kept in a contract, because a choice cannot read archived contracts and threefold repetition needs it.
+- **Move history** is _not_ stored in the contracts. The ledger already keeps every exercised `Move` event with its
+  `san` argument and the contract it created; `web/src/history.ts` reads them from `/v2/updates` (through the
+  gateway's `ledgerApi`) and follows the chain back from a game or result.
+- **Wallet Gateway**: sessions, the party-to-user mapping and the party signing keys (its `wallet-kernel` provider).
+- **Browser**: nothing persistent. The board is drawn from the FEN; party ids come from `web/public/config.json`.
+
+On a move, the page asks chess.js for the SAN, the SDK's `prepareExecuteAndWait` sends `Move {actor, san}`, the
+gateway prepares the transaction (this is where Daml runs the rules; an illegal move fails here and no approval
+window opens), you approve it in the gateway popup, the gateway signs with your party key and executes it. Only the
+mover signs: a consuming choice runs with the authority of the contract's signatories, so the new `Game`, which
+has both players as signatories, is authorised. The other page sees it on its next 2 second poll.
 
 ## Prerequisites
 
@@ -93,16 +114,19 @@ party on first login, but the app only offers the players listed in `web/public/
 ## Tests
 
 ```bash
-chess-poc/scripts/test-daml.sh          # Daml script tests (separate daml-test package)
+chess-poc/scripts/test-daml.sh          # Daml script tests (separate daml-test package), incl. perft counts
 node chess-poc/scripts/e2e-counter.mjs  # milestone 1: counter signed via the gateway
 node chess-poc/scripts/e2e-challenge.mjs# challenges, accept, lobby, polling
 node chess-poc/scripts/e2e-game.mjs     # dragged moves, an illegal drag, mate note, castling, draws, resignation
 node chess-poc/scripts/e2e-race.mjs     # lost races and double clicks
+node chess-poc/scripts/e2e-ledger.mjs   # cheating client, reject/abandon approvals, en passant, check handling
 ```
 
-The e2e scripts need the stack up. They do not clean up after themselves, and `e2e-game` and `e2e-race` assume an
-empty ledger (leftover games make their selectors ambiguous), so run each of those straight after `reset.sh`.
-`e2e-counter` and `e2e-challenge` tolerate leftovers. In the final run all four passed (game and race on a freshly reset stack, counter and challenge on a used one).
+The e2e scripts need the stack up. They do not clean up after themselves, and `e2e-game`, `e2e-race` and
+`e2e-ledger` assume an empty ledger (leftover games make their selectors ambiguous), so run each of those straight
+after `reset.sh`. `e2e-counter` and `e2e-challenge` tolerate leftovers. The session-expiry UI (Reconnect banner) is not covered by an e2e test. They drive headless Chromium, so none of this has been seen in a real desktop browser.
+The page has a few test hooks on `window.__chess` (pause polling, shorten the approval timeout, submit a move
+without the UI's own rule check); they are not used by normal play.
 
 ## Layout
 
@@ -144,6 +168,12 @@ scripts/       up/down/reset, deploy-dar, onboard (headless), e2e checks
 - **Process hygiene.** `pkill -f` patterns can match the shell that runs them; `down.sh` uses `[x]` patterns for
   that reason. Run `reset.sh` as a single command: interleaved runs leave a ledger user without a gateway wallet
   (`Self-issued login is not available for this user.`).
+- **Sessions last 10 minutes.** The gateway issues self-issued access tokens with a 10 minute lifetime and does
+  not refresh them. After that the ledger calls fail; the page then shows "the session may have expired" with a
+  **Reconnect** button (login popup again) and refuses actions with an explanation instead of hanging.
+- **Closing the approval window** without approving or rejecting leaves the SDK waiting (its timeout is 5 minutes).
+  The app gives up after 90 seconds with a message and unlocks the page; approving later still works and shows up.
+- **Rejecting in the wallet** asks for a browser `confirm()`; a headless test must accept it.
 - **Daml has no local recursion**: recursive helpers must be top level. Also `DA.Text` has no case conversion.
 - **Draw offers live on the Game**, not as a separate contract, so archiving the game on every move can never
   leave a stale offer behind.
@@ -154,7 +184,8 @@ scripts/       up/down/reset, deploy-dar, onboard (headless), e2e checks
 
 ## Not done
 
-- The chess clock (the move validation half of milestone 5 is done, on the ledger).
-- Automatic game endings (checkmate, stalemate, repetition) and a move history.
+- The chess clock (the move validation half of milestone 5 is done, on the ledger) and claiming a draw under the
+  50-move rule (only the automatic 75-move rule exists).
+- Refreshing the 10 minute session automatically; today the player reconnects when the page asks.
 - Streaming instead of polling.
 - Any cleanup of finished games / results, or a way to find other players than the configured ones.
