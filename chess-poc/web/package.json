@@ -8,7 +8,9 @@
         "build": "tsc -b && vite build"
     },
     "dependencies": {
-        "@canton-network/dapp-sdk": "catalog:"
+        "@canton-network/dapp-sdk": "catalog:",
+        "@chrisoakman/chessboardjs": "catalog:",
+        "jquery": "catalog:"
     },
     "devDependencies": {
         "typescript": "catalog:",

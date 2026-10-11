@@ -299,6 +299,9 @@ catalogs:
     '@canton-network/wallet-sdk':
       specifier: workspace:^
       version: workspace:^
+    '@chrisoakman/chessboardjs':
+      specifier: ^1.0.0
+      version: 1.0.0
     '@commander-js/extra-typings':
       specifier: ^14.0.0
       version: 14.0.0
@@ -650,6 +653,9 @@ catalogs:
     jose:
       specifier: ^5.10.0
       version: 5.10.0
+    jquery:
+      specifier: ^3.7.1
+      version: 3.7.1
     js-yaml:
       specifier: ^5.2.2
       version: 5.4.3
@@ -978,6 +984,12 @@ importers:
       '@canton-network/dapp-sdk':
         specifier: 'catalog:'
         version: link:../../sdk/dapp-sdk
+      '@chrisoakman/chessboardjs':
+        specifier: 'catalog:'
+        version: 1.0.0
+      jquery:
+        specifier: 'catalog:'
+        version: 3.7.1
     devDependencies:
       typescript:
         specifier: 'catalog:'
@@ -4614,6 +4626,9 @@ packages:
     resolution: {integrity: sha512-dI+9P7cfWxkTQ+oE+7Aa6onEn92PHgfWXZivjNheCRmTBDBf2fx6RyTi0cmgpYLnD1KLZK9ZYrMxaPZ4oiXhGA==}
     cpu: [x64]
     os: [win32]
+
+  '@chrisoakman/chessboardjs@1.0.0':
+    resolution: {integrity: sha512-JHXHoQwwc86xW3F0YIdFcEWLnPldee5mHkqwJbOTeDh5gvNmYXyBj6AkeecDkj2WtORF959yaWYlpyZHUl3LCQ==}
 
   '@clack/core@1.4.3':
     resolution: {integrity: sha512-/kr3UWNtdJfxZtPgDqUOmG2pvwlmcLGheex5yiZKdwbzZJxhV+HMNR9QNmyY5cGwTNV6LrR7Jtp+KjhUAP1qBQ==}
@@ -10091,6 +10106,9 @@ packages:
     resolution: {integrity: sha512-34wB/Y7MW7bzjKRjUKTa46I2Z7eV62Rkhva+KkopW7Qvv/OSWBqvkSY7vusOPrNuZcUG3tApvdVgNB8POj3SPw==}
     engines: {node: '>=10'}
 
+  jquery@3.7.1:
+    resolution: {integrity: sha512-m4avr8yL8kmFN8psrbFFFmB/If14iN5o9nw/NgnnM+kybDJpRsAynV2BsfpTYrTRysYUdADVD7CkUUizgkpLfg==}
+
   js-levenshtein@1.1.6:
     resolution: {integrity: sha512-X2BB11YZtrRqY4EnQcLX5Rh373zbK4alC1FW7D7MBhL2gtcC17cTnr6DmfHZeS0s2rTHjUTMMHfG7gO8SSdw+g==}
     engines: {node: '>=0.10.0'}
@@ -13581,6 +13599,10 @@ snapshots:
 
   '@cbor-extract/cbor-extract-win32-x64@2.2.2':
     optional: true
+
+  '@chrisoakman/chessboardjs@1.0.0':
+    dependencies:
+      jquery: 3.7.1
 
   '@clack/core@1.4.3':
     dependencies:
@@ -19575,6 +19597,8 @@ snapshots:
   jose@6.2.12: {}
 
   joycon@3.1.1: {}
+
+  jquery@3.7.1: {}
 
   js-levenshtein@1.1.6: {}
 

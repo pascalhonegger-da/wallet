@@ -18,8 +18,10 @@ export async function login(browser, user) {
     await page.getByText('Connect wallet').click()
     const picker = await popup
     await picker.getByText('Local Gateway').click()
-    const gw = await until(page, () =>
-        ctx.pages().find((x) => x.url().includes(':3030'))
+    const gw = await until(
+        page,
+        () => ctx.pages().find((x) => x.url().includes(':3030')),
+        'the gateway login popup'
     )
     await gw.locator('input').first().fill(user)
     await gw.getByText('Connect', { exact: true }).click()
@@ -31,21 +33,23 @@ export async function login(browser, user) {
         /** Run `action` (which triggers a submission) and approve it in the gateway's approval page. */
         async approve(action) {
             await action()
-            const ap = await until(page, () =>
-                ctx.pages().find((x) => x.url().includes('/approve'))
+            const ap = await until(
+                page,
+                () => ctx.pages().find((x) => x.url().includes('/approve')),
+                `the approval page (${user})`
             )
             await ap.getByText('Approve', { exact: true }).click()
         },
     }
 }
 
-async function until(page, f, tries = 150) {
+async function until(page, f, what, tries = 150) {
     for (let i = 0; i < tries; i++) {
         const v = f()
         if (v) return v
         await page.waitForTimeout(200)
     }
-    throw new Error('timed out waiting for popup')
+    throw new Error(`timed out waiting for ${what}`)
 }
 
 export const waitText = (page, text, opts = {}) =>

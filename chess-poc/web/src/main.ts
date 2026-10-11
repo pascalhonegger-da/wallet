@@ -9,6 +9,7 @@ import {
     queryActive,
     sdk,
 } from './ledger'
+import { mountBoard } from './board'
 
 const COUNTER = '#chess-poc:Counter:Counter'
 const CHALLENGE = '#chess-poc:Chess:Challenge'
@@ -49,6 +50,8 @@ const nameOf = (p: string) =>
 const POLL_MS = 2000
 let timer: ReturnType<typeof setInterval> | undefined
 let polling = false
+let paused = false // test hook: lets the e2e check act on a deliberately stale view
+let busy = false // one submission at a time: prevents double clicks
 const lastHtml: Record<string, string> = {}
 
 /** Static part of the page: rendered once so polling never resets form inputs. */
@@ -58,6 +61,7 @@ function renderShell() {
     )
     app.innerHTML = `
         <h3>You are <b>${nameOf(party)}</b> <small id="status"></small></h3>
+        <div id="message" role="alert" style="color: #b00020"></div>
         <section id="new-challenge">
             <h4>New challenge</h4>
             <select id="opponent">${opponents.map(([n, id]) => `<option value="${id}">${n}</option>`).join('')}</select>
@@ -114,23 +118,52 @@ function gameHtml(cid: string, g: Game) {
         draw = `${nameOf(opponent)} offers a draw
             <button data-act="AcceptDraw" data-cid="${cid}">Accept draw</button>
             <button data-act="DeclineDraw" data-cid="${cid}">Decline draw</button>`
-    return `<li class="game">
+    return `<li class="game" data-cid="${cid}">
         ${nameOf(g.white)} (white) vs ${nameOf(g.black)} (black), ${g.turn} to move, move ${g.moveCount}
-        <pre>${asciiBoard(g.board)}</pre>
-        ${myTurn ? `<input class="from" size="2" placeholder="e2"> to <input class="to" size="2" placeholder="e4"> <button data-act="Move" data-cid="${cid}">Move</button>` : ''}
+        <div class="board" style="width: 320px"></div>
+        <details><summary>text board / type a move</summary>
+            <pre>${asciiBoard(g.board)}</pre>
+            ${myTurn ? `<input class="from" size="2" placeholder="e2"> to <input class="to" size="2" placeholder="e4"> <button data-act="Move" data-cid="${cid}">Move</button>` : ''}
+        </details>
         <button data-act="Resign" data-cid="${cid}">Resign</button> ${draw}
     </li>`
 }
 
+/** (Re)mount a chessboard.js board in every game item; called whenever the games list HTML was replaced. */
+function mountBoards(games: { contractId: string; payload: Game }[]) {
+    for (const { contractId: cid, payload: g } of games) {
+        const li = document.querySelector<HTMLElement>(
+            `li.game[data-cid="${cid}"]`
+        )
+        if (!li) continue
+        const mine = party === g.white ? 'w' : party === g.black ? 'b' : ''
+        const myTurn = (g.turn === 'White' ? 'w' : 'b') === mine
+        void mountBoard(li.querySelector<HTMLElement>('.board')!, {
+            position: g.board,
+            orientation: party === g.black ? 'black' : 'white',
+            canDrag: (piece) => !busy && myTurn && piece[0] === mine,
+            onMove: (fromSq, toSq) =>
+                void run(() =>
+                    exercise(party, GAME, cid, 'Move', {
+                        actor: party,
+                        fromSq,
+                        toSq,
+                    })
+                ),
+        })
+    }
+}
+
 /** Replace a list's contents only if they changed. */
-function setList(id: string, html: string) {
-    if (lastHtml[id] === html) return
+function setList(id: string, html: string): boolean {
+    if (lastHtml[id] === html) return false
     lastHtml[id] = html
     document.getElementById(id)!.innerHTML = html
+    return true
 }
 
 async function refresh() {
-    if (polling) return
+    if (polling || paused) return
     polling = true
     try {
         const [counters, challenges, games, results] = await Promise.all([
@@ -154,12 +187,17 @@ async function refresh() {
                 })
                 .join('')
         )
-        setList(
-            'games',
-            games
-                .map(({ contractId, payload }) => gameHtml(contractId, payload))
-                .join('')
+        if (
+            setList(
+                'games',
+                games
+                    .map(({ contractId, payload }) =>
+                        gameHtml(contractId, payload)
+                    )
+                    .join('')
+            )
         )
+            mountBoards(games)
         setList(
             'results',
             results
@@ -188,12 +226,42 @@ async function refresh() {
     }
 }
 
+let messageTimer: ReturnType<typeof setTimeout> | undefined
+function showMessage(text: string) {
+    const el = document.getElementById('message')
+    if (!el) return
+    el.textContent = text
+    clearTimeout(messageTimer)
+    if (text) messageTimer = setTimeout(() => (el.textContent = ''), 10000)
+}
+
+/** Turn ledger/gateway errors into something a player can act on. */
+export function friendlyError(e: unknown): string {
+    const msg = String((e as Error)?.message ?? e)
+    if (
+        /CONTRACT_NOT_FOUND|CONTRACT_NOT_ACTIVE|could not be found|not active|inactive|archived|consumed|UNKNOWN_CONTRACT/i.test(
+            msg
+        )
+    )
+        return 'Too late: the other side changed this first. The view has been refreshed.'
+    const daml = /(?:Aborted|Assertion failed|ABORT)[^:]*:\s*(.+)$/is.exec(msg)
+    if (daml) return `Not allowed: ${daml[1].split('\n')[0].trim()}`
+    return msg.length > 200 ? msg.slice(0, 200) + '…' : msg
+}
+
 async function run(f: () => Promise<unknown>) {
+    if (busy) return
+    busy = true
+    document.body.classList.add('busy')
     try {
         await f()
+        showMessage('')
     } catch (e) {
         console.error(e)
-        alert(String((e as Error).message ?? e))
+        showMessage(friendlyError(e))
+    } finally {
+        busy = false
+        document.body.classList.remove('busy')
     }
     await refresh()
 }
@@ -256,4 +324,8 @@ async function main() {
         await start()
     })
 }
+// Test hook for the e2e race check.
+Object.assign(window, {
+    __chess: { pause: () => (paused = true), resume: () => (paused = false) },
+})
 main()

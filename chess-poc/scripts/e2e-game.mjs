@@ -15,9 +15,13 @@ const square = (u, sq) =>
     u.page
         .locator('li.game pre')
         .first()
-        .innerText()
+        .textContent() // innerText is empty while the <details> is closed
         .then((t) => {
             const row = t.split('\n').find((l) => l.startsWith(sq[1] + ' '))
+            if (!row)
+                throw new Error(
+                    `no row for ${sq} in text board: ${JSON.stringify(t)}`
+                )
             return row.trim().split(/\s+/)[1 + 'abcdefgh'.indexOf(sq[0])]
         })
 
@@ -34,10 +38,16 @@ async function startGame() {
     await alice.page.locator('li.game').first().waitFor({ timeout: 20000 })
     await bob.page.locator('li.game').first().waitFor({ timeout: 20000 })
 }
+// Every move is a real drag on the chessboard.js board (the typed-move inputs sit in a closed <details>).
 async function move(u, from, to) {
-    await u.page.locator('li.game .from').first().fill(from)
-    await u.page.locator('li.game .to').first().fill(to)
-    await u.approve(() => btn(u, 'Move').click())
+    await u.page
+        .locator(`li.game .square-${from} img`)
+        .waitFor({ timeout: 20000 })
+    await u.approve(() =>
+        u.page
+            .locator(`li.game .square-${from}`)
+            .dragTo(u.page.locator(`li.game .square-${to}`))
+    )
 }
 
 await startGame()
