@@ -5,6 +5,7 @@ update:
     githubActions: true
 packages:
     - api-specs
+    - chess-poc/web
     - core/**
     - docs/wallet-integration-guide/examples
     - examples/**

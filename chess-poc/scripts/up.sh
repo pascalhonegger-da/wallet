@@ -33,9 +33,13 @@ done
 echo "participant $PARTICIPANT_ID, synchronizer $SYNC_ID"
 sed -e "s|@PARTICIPANT_ID@|$PARTICIPANT_ID|" -e "s|@SYNCHRONIZER_ID@|$SYNC_ID|" \
   "$ROOT/gateway/config.template.json" > "$RUN/config.json"
-# Daml build + upload is done by scripts/deploy-dar.sh once Daml exists
+"$ROOT/scripts/deploy-dar.sh"
 WORKDIR="$RUN" start gateway node "$REPO/wallet-gateway/remote/dist/index.js" -c "$RUN/config.json"
 waitfor gateway http://127.0.0.1:3030/
+# Web app: production build + preview (the Vite dev server breaks the SDK's wallet-picker popup).
+(cd "$ROOT/web" && ./node_modules/.bin/vite build >/dev/null 2>&1)
+WORKDIR="$ROOT/web" start web ./node_modules/.bin/vite preview --port 5173 --host 0.0.0.0 --strictPort
+waitfor web http://localhost:5173/
 # Players: self-issued users, each with an authentication party created through the gateway UI.
 for u in ${CHESS_USERS:-alice bob lobby}; do node "$ROOT/scripts/onboard.mjs" "$u"; done
 echo "Stack is up. Gateway UI http://localhost:3030"

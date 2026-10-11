@@ -1,0 +1,17 @@
+{
+    "name": "@canton-network/chess-poc-web",
+    "private": true,
+    "version": "0.0.0",
+    "type": "module",
+    "scripts": {
+        "dev": "vite",
+        "build": "tsc -b && vite build"
+    },
+    "dependencies": {
+        "@canton-network/dapp-sdk": "catalog:"
+    },
+    "devDependencies": {
+        "typescript": "catalog:",
+        "vite": "catalog:"
+    }
+}

@@ -973,6 +973,19 @@ importers:
         specifier: 'catalog:'
         version: 1.7.8(supports-color@10.2.2)
 
+  chess-poc/web:
+    dependencies:
+      '@canton-network/dapp-sdk':
+        specifier: 'catalog:'
+        version: link:../../sdk/dapp-sdk
+    devDependencies:
+      typescript:
+        specifier: 'catalog:'
+        version: 6.0.3
+      vite:
+        specifier: 'catalog:'
+        version: 7.3.6(@types/node@25.9.9)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1)
+
   core/acs-reader:
     dependencies:
       '@canton-network/core-ledger-client-types':
