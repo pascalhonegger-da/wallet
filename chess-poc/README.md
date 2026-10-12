@@ -129,9 +129,18 @@ docker run -d --name canton-chess -p 8080:8080 -e PUBLIC_URL=https://canton-ches
 - Starting takes a minute or two (the sandbox boots and the DAR is deployed); `docker logs` shows progress and
   `/wallet-gateway/healthz` answers once the gateway is up. If any process in the container dies, the container
   exits (use `--restart unless-stopped` if you want it to come back, with an empty ledger).
-- The image is several GB (the Daml SDK). Memory: Canton needs about 1.5 GB, so give the container 2 GB or more. Java and Node come from their official
-  images; the Daml SDK 3.6.0 (with the sandbox) is installed with `dpm` during the image build (`--build-arg
-SDK_VERSION=...`, but self-issued tokens need Canton 3.6+).
+- Memory: Canton needs about 1.5 GB (`-Xmx` defaults to 1536m, override with `-e CANTON_HEAP=2g`), so give the container 2 GB or more. Java and Node come from their official
+  images. The Daml SDK 3.6.0 is installed with `dpm` in a throwaway build stage that only produces the DAR and the Canton jar
+  (`--build-arg SDK_VERSION=...`, but self-issued tokens need Canton 3.6+); the runtime image runs `java -jar canton.jar sandbox` without `dpm`.
+- **Raspberry Pi / ARM64:** `dpm` has no ARM build, so that stage is pinned to amd64; everything else follows the target platform.
+  Build on a bigger machine and move the image over:
+    ```bash
+    docker buildx build --platform linux/arm64 -f chess-poc/Dockerfile -t canton-chess --load .
+    docker save canton-chess | gzip > canton-chess-arm64.tar.gz   # then: docker load < ... on the Pi
+    ```
+    Use a Pi 4 with 4 GB or more. Startup is much slower than on a laptop (the wait loops allow ~10 minutes; `WAIT_TRIES`
+    overrides it). Only the jar launch was tried, on aarch64: the JVM and its bundled natives start and the JSON API is up
+    within seconds. The multi-arch image build and a full run on a Pi were not tried.
 - This is the same joke PoC: the mock OAuth admin secret is the one in `gateway/config.template.json` (only reachable
   inside the container), and anybody who reaches the site can create a party and play.
 - **Not verified here:** the `docker build` itself. The Docker daemon in my sandbox ran out of disk, so I could only

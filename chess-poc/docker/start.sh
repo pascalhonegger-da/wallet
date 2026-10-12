@@ -11,13 +11,13 @@ SCHEME="${PUBLIC_URL%%://*}"
 HOST="${PUBLIC_URL#*://}"; HOST="${HOST%%/*}"
 PIDS=()
 start() { local n=$1; shift; "$@" > "$RUN/$n.log" 2>&1 & PIDS+=($!); }
-waitfor() { for _ in $(seq 1 120); do curl -sf -o /dev/null "$2" && { echo "$1 up"; return; }; sleep 2; done
+waitfor() { for _ in $(seq 1 "${WAIT_TRIES:-300}"); do curl -sf -o /dev/null "$2" && { echo "$1 up"; return; }; sleep 2; done
   echo "$1 failed to start:"; tail -30 "$RUN/$1.log"; exit 1; }
 trap 'kill "${PIDS[@]}" 2>/dev/null || true' EXIT
 
 cd "$APP/mock-oauth" && start oauth ./node_modules/.bin/tsx src/index.ts; cd "$RUN"
 waitfor oauth http://127.0.0.1:8889/.well-known/openid-configuration
-start sandbox dpm sandbox --json-api-port 7575 -c "$APP/gateway-config/sandbox-auth.conf" --no-tty
+start sandbox java "-Xmx${CANTON_HEAP:-1536m}" -jar "$APP/canton.jar" sandbox --json-api-port 7575 -c "$APP/gateway-config/sandbox-auth.conf" --no-tty
 waitfor sandbox http://127.0.0.1:7575/livez
 
 TOKEN() { curl -sf -X POST http://127.0.0.1:8889/token -u participant_admin:admin-client-secret \
@@ -45,7 +45,7 @@ sed -e "s|@PARTICIPANT_ID@|$PARTICIPANT_ID|" -e "s|@SYNCHRONIZER_ID@|$SYNC_ID|" 
       process.stdout.write(JSON.stringify(c, null, 2))' > "$RUN/gateway.json"
 
 curl -sf -X POST http://127.0.0.1:7575/v2/packages "${auth[@]}" -H 'Content-Type: application/octet-stream' \
-  --data-binary @"$APP/daml/.daml/dist/chess-poc-0.0.1.dar" >/dev/null && echo "DAR uploaded"
+  --data-binary @"$APP/chess-poc.dar" >/dev/null && echo "DAR uploaded"
 start gateway node "$APP/gateway/dist/index.js" -c "$RUN/gateway.json"
 waitfor gateway http://127.0.0.1:3030/healthz
 
