@@ -26,22 +26,24 @@ RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
  && pnpm nx build @canton-network/wallet-gateway-remote \
  && pnpm nx build @canton-network/dapp-sdk \
  && (cd chess-poc/web && ./node_modules/.bin/vite build) \
- && pnpm --filter @canton-network/wallet-gateway-remote deploy --prod --legacy /out/gateway \
- && pnpm --filter @canton-network/mock-oauth2 deploy --legacy /out/mock-oauth \
- && cp -r chess-poc/web/dist /out/web
+ && pnpm --filter @canton-network/wallet-gateway-remote deploy --prod --config.inject-workspace-packages=true /out/gateway \
+ && pnpm --filter @canton-network/mock-oauth2 deploy --config.inject-workspace-packages=true /out/mock-oauth \
+ && cp -r chess-poc/web/dist /out/web \
+ && rm -rf /repo/node_modules /repo/.nx
 
 # ---- Daml build: the DAR and the Canton jar --------------------------------------------------------------------
-# dpm only exists for amd64, so this stage is pinned to it (emulated on ARM build machines; it is small).
-FROM --platform=linux/amd64 nginx:stable-bookworm AS daml
+# runs on the build machine's own architecture (dpm needs a native amd64 or arm64 host).
+FROM --platform=$BUILDPLATFORM nginx:stable-bookworm AS daml
 ARG SDK_VERSION=3.6.0
 ENV DPM_SDK_VERSION=$SDK_VERSION HOME=/root PATH=/root/.dpm/bin:$PATH
-RUN curl -sSL https://get.digitalasset.com/install/install.sh | sh -s $SDK_VERSION
-RUN dpm sandbox --help >/dev/null 2>&1 || true
+# one RUN: the SDK is several GB and must not stay in a layer; only the two files in /out do
 COPY chess-poc/daml /src/daml
-RUN cd /src/daml && dpm build \
+RUN curl -sSL https://get.digitalasset.com/install/install.sh | sh -s $SDK_VERSION \
+ && cd /src/daml && dpm build \
  && mkdir /out \
  && cp .daml/dist/chess-poc-0.0.1.dar /out/chess-poc.dar \
- && cp /root/.dpm/cache/components/canton-open-source/*/lib/canton-open-source-*.jar /out/canton.jar
+ && cp /root/.dpm/cache/components/canton-open-source/*/lib/canton-open-source-*.jar /out/canton.jar \
+ && rm -rf /root/.dpm
 
 # ---- runtime ---------------------------------------------------------------------------------------------------
 # nginx image (Debian 12, has curl and bash) plus the Java runtime Canton needs and Node, copied from their official

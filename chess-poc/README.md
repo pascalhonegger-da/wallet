@@ -139,8 +139,8 @@ docker run -d --name canton-chess -p 8080:8080 -e PUBLIC_URL=https://canton-ches
     docker save canton-chess | gzip > canton-chess-arm64.tar.gz   # then: docker load < ... on the Pi
     ```
     Use a Pi 4 with 4 GB or more. Startup is much slower than on a laptop (the wait loops allow ~10 minutes; `WAIT_TRIES`
-    overrides it). Only the jar launch was tried, on aarch64: the JVM and its bundled natives start and the JSON API is up
-    within seconds. The multi-arch image build and a full run on a Pi were not tried.
+    overrides it). The arm64 image was built and started on an aarch64 machine (sandbox, DAR upload, gateway and nginx come up,
+    the UI answers); a prebuilt copy is `canton-chess-arm64.tar.gz` (PoC only). A run on an actual Pi was not tried.
 - This is the same joke PoC: the mock OAuth admin secret is the one in `gateway/config.template.json` (only reachable
   inside the container), and anybody who reaches the site can create a party and play.
 - **Not verified here:** the `docker build` itself. The Docker daemon in my sandbox ran out of disk, so I could only
